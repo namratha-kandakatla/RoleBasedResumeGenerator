@@ -48,7 +48,7 @@ Responsibilities:
 [Insert Bullet points Here]`;
 
 const skillBank = {
-  "Programming Languages": ["C#", "Java", "JavaScript", "TypeScript", "Python", "SQL"],
+  "Programming Languages": ["C#", "Java", "JavaScript", "TypeScript", "Python", "SQL", "Bash", "PowerShell"],
   "Frameworks and CMS": ["Sitecore XP", "Sitecore XM", "Sitecore", "SXA", "Helix", ".NET", "ASP.NET MVC", "ASP.NET Core", "MVC", "Spring Boot", "Spring MVC", "React", "Angular", "Node.js", "Hibernate", "JPA"],
   "Cloud Platforms": ["AWS", "Azure", "GCP"],
   "Databases": ["PostgreSQL", "MySQL", "Oracle", "MongoDB", "DynamoDB", "SQL Server"],
@@ -56,14 +56,19 @@ const skillBank = {
   "Search and Indexing": ["Solr", "Coveo", "Sitecore Search"],
   "Integration Technologies": ["REST APIs", "GraphQL", "SOAP", "JSON", "XML"],
   "Messaging Technologies": ["Kafka", "RabbitMQ", "SQS", "SNS", "ActiveMQ"],
-  "DevOps Tools": ["Docker", "Kubernetes", "Terraform", "Maven", "Gradle", "PowerShell"],
+  "DevOps Tools": ["Docker", "Kubernetes", "Terraform", "Maven", "Gradle", "PowerShell", "Ansible", "Helm"],
   "CI/CD Tools": ["Jenkins", "GitHub Actions", "GitLab CI", "Azure DevOps"],
   "Testing Tools": ["xUnit", "NUnit", "MSTest", "JUnit", "Mockito", "Jest", "Cypress", "Selenium"],
   "Monitoring Tools": ["Application Insights", "CloudWatch", "Splunk", "Grafana", "Prometheus", "ELK"],
   "Version Control": ["Git", "Bitbucket", "GitHub", "GitLab"],
-  "Methodologies": ["Agile", "Scrum", "Kanban", "SDLC"],
+  "Methodologies": ["Agile", "Scrum", "Kanban", "SDLC", "Waterfall", "SAFe"],
   "Architecture Patterns": ["Microservices", "Event Driven", "REST", "SOA", "Monolithic"],
-  "Security Technologies": ["OAuth2", "JWT", "Spring Security", "IAM"]
+  "Security Technologies": ["OAuth2", "JWT", "Spring Security", "IAM"],
+  "Business Analysis": ["Requirements Gathering", "Requirement Analysis", "User Stories", "Acceptance Criteria", "BRD", "FRD", "Process Mapping", "Gap Analysis", "UAT", "Stakeholder Management", "Jira", "Confluence"],
+  "Workday": ["Workday HCM", "Workday Financials", "Workday Studio", "Workday EIB", "Workday Core HCM", "Workday Recruiting", "Workday Payroll", "Workday Security", "Business Process Configuration", "Calculated Fields", "Custom Reports", "Tenant Management"],
+  "Product Management": ["Product Roadmap", "Backlog Management", "Sprint Planning", "Prioritization", "User Research", "Release Planning", "Product Strategy", "KPI", "OKR"],
+  "Data and Reporting": ["Data Analysis", "Reporting", "Dashboards", "Power BI", "Tableau", "Excel", "Data Mapping"],
+  "Operations and Governance": ["Incident Management", "Change Management", "Release Management", "Compliance", "Risk Management", "Governance", "SLA"]
 };
 
 const defaultProjects = [
@@ -541,8 +546,7 @@ async function buildDocxFromUploadedTemplate(artifacts) {
 function detectSkills(jobDescription, template, projects) {
   const haystack = normalize([
     jobDescription,
-    template,
-    ...projects.flatMap((project) => [project.cloud, project.domain])
+    ...projects.flatMap((project) => [project.domain, project.cloud])
   ].join(" "));
   const grouped = {};
 
@@ -554,50 +558,9 @@ function detectSkills(jobDescription, template, projects) {
     grouped[category] = unique([...(grouped[category] || []), ...skills]);
   };
 
-  if (/sitecore|sxa|helix|cms|content|experience platform/.test(haystack)) {
-    addSkills("Programming Languages", ["C#", "SQL"]);
-    addSkills("Frameworks and CMS", ["Sitecore XP", "Sitecore XM", "Sitecore", "SXA", "Helix", ".NET", "ASP.NET MVC"]);
-    addSkills("Databases", ["SQL Server"]);
-    addSkills("CMS Authoring and Presentation", ["Content Editor", "Experience Editor", "Sitecore Workflows", "Templates", "Renderings", "Layouts", "Placeholder Settings", "Content Items", "Media Library"]);
-    addSkills("Search and Indexing", ["Solr"]);
-    addSkills("Integration Technologies", ["REST APIs", "JSON", "XML"]);
-    addSkills("DevOps Tools", ["PowerShell"]);
-    addSkills("Testing Tools", ["xUnit", "NUnit", "Selenium"]);
-    addSkills("Monitoring Tools", ["Application Insights"]);
-    addSkills("Version Control", ["Git"]);
-    addSkills("Methodologies", ["Agile", "Scrum", "SDLC"]);
-    addSkills("Architecture Patterns", ["Helix", "REST"]);
-  }
-
-  if (/ci\/cd|pipeline|deployment|release|devops/.test(haystack)) {
-    addSkills("CI/CD Tools", ["Azure DevOps", "Jenkins", "GitHub Actions"]);
-  }
-
   if (/cloud|aws|azure|gcp/.test(haystack) || projects.some((project) => project.cloud)) {
     addSkills("Cloud Platforms", unique(projects.map((project) => project.cloud)).filter(Boolean));
   }
-
-  const implied = {
-    Sitecore: ["C#", ".NET", "ASP.NET MVC", "Solr"],
-    "Sitecore XP": ["Sitecore", "C#", ".NET"],
-    "Sitecore XM": ["Sitecore", "C#", ".NET"],
-    SXA: ["Sitecore", "C#", ".NET"],
-    Helix: ["Sitecore", "C#", ".NET"],
-    ".NET": ["C#"],
-    Java: ["Spring Boot", "JUnit", "Mockito", "Maven"],
-    "Spring Boot": ["REST", "JPA"],
-    React: ["JavaScript"],
-    TypeScript: ["JavaScript"],
-    AWS: ["CloudWatch", "IAM"],
-    Microservices: ["REST", "Docker"]
-  };
-
-  Object.values(grouped).flat().forEach((skill) => {
-    (implied[skill] || []).forEach((item) => {
-      const category = Object.keys(skillBank).find((key) => skillBank[key].includes(item));
-      if (category) grouped[category] = unique([...(grouped[category] || []), item]);
-    });
-  });
 
   return Object.fromEntries(Object.entries(grouped).filter(([, skills]) => skills.length));
 }
@@ -623,12 +586,16 @@ function careerLevel(years, projectIndex, totalProjects) {
 }
 
 function suggestedDesignation(years, index) {
-  const target = normalize(form.elements.jobTitle.value);
-  const roleFamily = target.includes("sitecore") ? "Sitecore Developer" : "Software Engineer";
+  const roleFamily = cleanRoleTitle(form.elements.jobTitle.value);
   if (index === 0 && years >= 8) return `Lead ${roleFamily}`;
-  if (index === 0 && years >= 5) return `Senior ${roleFamily}`;
-  if (index <= 1 && years >= 3) return roleFamily;
-  return `Associate ${roleFamily}`;
+  if (index <= 1 && years >= 5) return `Senior ${roleFamily}`;
+  if (index <= 2 && years >= 2) return roleFamily;
+  return `Junior ${roleFamily}`;
+}
+
+function cleanRoleTitle(value) {
+  const role = String(value || "").replace(/\s+/g, " ").trim();
+  return role || "Professional";
 }
 
 function formatMonth(date) {
@@ -641,6 +608,7 @@ function addMonths(date, months) {
 
 function distributeMonths(totalMonths, count) {
   if (count <= 0) return [];
+  if (totalMonths < count * 3) return Array.from({ length: count }, () => 3);
   const weights = Array.from({ length: count }, (_, index) => Math.max(1, count - index));
   const totalWeight = weights.reduce((sum, value) => sum + value, 0);
   const raw = weights.map((weight) => Math.max(6, Math.round((totalMonths * weight) / totalWeight)));
@@ -658,9 +626,15 @@ function distributeMonths(totalMonths, count) {
 }
 
 function alignProjectTimeline() {
-  const years = Math.max(0, Number(yearsInput.value || 0));
   const cards = [...projectsEl.querySelectorAll(".project-card")];
   if (!cards.length) return;
+  if (!yearsInput.value.trim()) {
+    cards.forEach((card) => {
+      delete card.dataset.duration;
+    });
+    return;
+  }
+  const years = Math.max(0, Number(yearsInput.value || 0));
   const durations = distributeMonths(Math.max(1, Math.round(years * 12)), cards.length);
   let end = new Date();
 
@@ -676,112 +650,720 @@ function alignProjectTimeline() {
   });
 }
 
-function buildSummary({ jobTitle, years, projects, groupedSkills, jobMap }) {
+function buildSummary({ jobTitle, years, projects, groupedSkills, jobDescription, correctionTerms = [] }) {
   const domains = unique(projects.map((project) => project.domain)).slice(0, 3).join(", ");
-  const skills = unique(Object.values(groupedSkills).flat()).slice(0, 12);
-  const cloud = groupedSkills["Cloud Platforms"]?.join(", ");
-  const architecture = groupedSkills["Architecture Patterns"]?.filter((item) => item !== "REST").join(", ");
-  const leadership = Number(years) >= 7 || jobMap.leadership
-    ? " Experienced in technical leadership, code reviews, mentoring, cross-team collaboration, and production support ownership."
-    : " Experienced in feature delivery, code quality, testing, documentation, and production support collaboration.";
+  const skills = flattenGroupedSkills(groupedSkills).slice(0, 12);
+  const role = cleanRoleTitle(jobTitle);
+  const roleTrack = inferRoleTrack(role);
+  const value = roleValuePhrase(roleTrack);
+  const artifacts = roleArtifacts(roleTrack);
+  const keywordBridge = unique([summaryKeywordBridge(jobDescription), ...correctionTerms].flatMap((item) => String(item || "").split(",").map((part) => part.trim()))).filter(Boolean).slice(0, 12).join(", ");
 
   return [
-    `- ${jobTitle} with ${years}+ years of experience designing, developing, testing, and supporting enterprise applications across ${domains || "business-critical domains"}.`,
-    `- Skilled in ${skills.join(", ") || "modern software engineering practices"} with exposure to ${architecture || "application architecture"}${cloud ? ` and ${cloud} cloud environments` : ""}.`,
-    `- Adept at translating business requirements into maintainable solutions across the SDLC while partnering with product, QA, DevOps, and architecture teams.${leadership}`
+    `- ${role} with ${years}+ years of experience delivering ${value} across ${domains || "business-critical domains"}.`,
+    `- Applies ${skills.slice(0, 8).join(", ") || "role-aligned practices"} to translate target-role requirements into practical outcomes, clear deliverables, and measurable execution discipline.`,
+    `- Uses ${artifacts.slice(0, 5).join(", ")}${artifacts.length > 5 ? `, and ${artifacts.slice(5).join(", ")}` : ""} to keep the resume aligned to the ${role} ecosystem rather than unrelated role content.`,
+    `- Strengthens ${keywordBridge || "business alignment, communication, collaboration, and release readiness"} through stakeholder collaboration, structured analysis, delivery ownership, quality validation, and continuous improvement.`
   ].join("\n");
 }
 
-function summaryLines({ jobTitle, years, projects, groupedSkills, jobMap }) {
-  return buildSummary({ jobTitle, years, projects, groupedSkills, jobMap }).split("\n");
+function summaryLines({ jobTitle, years, projects, groupedSkills, jobDescription, correctionTerms = [] }) {
+  return buildSummary({ jobTitle, years, projects, groupedSkills, jobDescription, correctionTerms }).split("\n");
 }
 
-function buildSkillMatrix(groupedSkills) {
+function buildSkillMatrix(groupedSkills, jobDescription = "") {
+  const jd = normalize(jobDescription);
   return Object.entries(groupedSkills)
-    .map(([category, skills]) => `${category}: ${skills.join(", ")}`)
+    .map(([category, skills]) => {
+      const orderedSkills = [...skills].sort((left, right) => {
+        const leftIndex = jd.indexOf(left.toLowerCase());
+        const rightIndex = jd.indexOf(right.toLowerCase());
+        if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
+        if (leftIndex === -1) return 1;
+        if (rightIndex === -1) return -1;
+        return leftIndex - rightIndex;
+      });
+      const relevance = orderedSkills.reduce((score, skill) => score + (jd.includes(skill.toLowerCase()) ? 1 : 0), 0);
+      return { category, skills: orderedSkills, relevance };
+    })
+    .sort((left, right) => {
+      if (right.relevance !== left.relevance) return right.relevance - left.relevance;
+      return left.category.localeCompare(right.category);
+    })
+    .map(({ category, skills }) => `${category}: ${skills.join(", ")}`)
     .join("\n");
 }
 
-function technologyStack(skills, jobMap) {
-  if (jobMap.cms || skills.some((skill) => /sitecore|sxa|helix/i.test(skill))) {
+function summaryKeywordBridge(jobDescription) {
+  const groups = detectJobKeywordGroups(jobDescription);
+  return unique([
+    ...groups.businessKeywords,
+    ...groups.softSkills,
+    ...groups.domainKeywords
+  ]).slice(0, 8).join(", ");
+}
+
+function inferRoleTrack(jobTitle) {
+  const title = normalize(jobTitle);
+  if (/business analyst|ba\b|systems analyst|functional analyst/.test(title)) return "businessAnalysis";
+  if (/workday|hcm consultant|workday consultant|workday analyst/.test(title)) return "workday";
+  if (/devops|sre|site reliability|platform engineer|cloud engineer/.test(title)) return "devops";
+  if (/product owner|product manager|scrum product/.test(title)) return "product";
+  if (/qa|quality|test engineer|automation tester/.test(title)) return "quality";
+  if (/data|analytics|bi developer|reporting/.test(title)) return "data";
+  if (/project manager|program manager|scrum master/.test(title)) return "delivery";
+  return "technical";
+}
+
+function roleValuePhrase(roleTrack) {
+  return {
+    businessAnalysis: "requirements analysis, process improvement, stakeholder alignment, UAT readiness, and business workflow optimization",
+    workday: "Workday configuration, tenant readiness, business process optimization, security validation, reporting, and HRIS stakeholder enablement",
+    devops: "automation, CI/CD reliability, cloud operations, deployment governance, monitoring, and incident response",
+    product: "roadmap execution, backlog prioritization, stakeholder communication, release planning, and product outcome alignment",
+    quality: "test strategy, defect prevention, automation coverage, release validation, and quality improvement",
+    data: "data analysis, reporting, dashboard insights, data mapping, and decision-support outcomes",
+    delivery: "delivery planning, team coordination, governance, risk management, and release execution",
+    technical: "solution delivery, system enhancement, integration readiness, production support, and cross-functional execution"
+  }[roleTrack] || "target-role delivery";
+}
+
+function domainTerms(domain) {
+  const text = normalize(domain);
+  if (/health|medical|care|pharma|cvs/.test(text)) {
+    return ["claims", "member services", "patient data", "compliance", "care operations"];
+  }
+  if (/logistics|supply|transport|inventory|operations|kinect/.test(text)) {
+    return ["supply chain", "transportation", "inventory", "operations", "order movement"];
+  }
+  if (/telecom|network|ericsson|cisco|connectivity/.test(text)) {
+    return ["network operations", "customer services", "provisioning", "connectivity", "service assurance"];
+  }
+  if (/finance|bank|payment|insurance/.test(text)) {
+    return ["transactions", "risk controls", "customer accounts", "compliance", "financial operations"];
+  }
+  return ["business operations", "customer workflows", "operational data", "service delivery", "process controls"];
+}
+
+function domainProfile(domain) {
+  const text = normalize(domain);
+  if (/health|medical|care|pharma|cvs/.test(text)) {
     return {
-      platform: "Sitecore CMS, C#, .NET, ASP.NET MVC, templates, renderings, layouts, workflows, and search integrations",
-      frontend: skills.includes("React") ? "React and TypeScript components" : "responsive presentation components and Sitecore renderings",
-      database: skills.includes("SQL Server") ? "SQL Server" : "content databases and relational data stores",
-      architecture: "Sitecore Helix-aligned component architecture"
+      workflow: "claims adjudication, member services, patient data validation, and compliance intake",
+      stakeholders: "product owners, compliance analysts, care operations leads, QA, and release teams",
+      evidence: "claims exception reports, member-service workflow maps, audit notes, and UAT sign-off logs"
     };
   }
-  const backendSkills = [];
-  if (skills.includes("Spring Boot")) backendSkills.push("Spring Boot");
-  if (skills.includes("Java")) backendSkills.push("Java");
-  if (skills.includes(".NET")) backendSkills.push(".NET");
-  if (skills.includes("C#")) backendSkills.push("C#");
-  if (skills.includes("Node.js")) backendSkills.push("Node.js");
-  const backend = backendSkills.length ? backendSkills.join(", ") : "the target technology stack";
+  if (/logistics|supply|transport|inventory|operations|kinect/.test(text)) {
+    return {
+      workflow: "supply chain visibility, transportation planning, inventory movement, and operations support",
+      stakeholders: "operations managers, warehouse coordinators, product owners, QA, and integration teams",
+      evidence: "inventory reconciliation reports, transportation process flows, exception logs, and SLA dashboards"
+    };
+  }
+  if (/telecom|network|ericsson|cisco|connectivity/.test(text)) {
+    return {
+      workflow: "network operations, customer provisioning, connectivity assurance, and service recovery",
+      stakeholders: "network operations teams, provisioning leads, support managers, QA, and release coordinators",
+      evidence: "provisioning reports, incident trends, connectivity dashboards, and service assurance checklists"
+    };
+  }
+  if (/finance|bank|payment|insurance/.test(text)) {
+    return {
+      workflow: "transaction controls, account servicing, risk review, and regulatory reporting",
+      stakeholders: "operations leaders, risk analysts, finance product owners, QA, and release teams",
+      evidence: "reconciliation reports, risk-control logs, audit samples, and transaction dashboards"
+    };
+  }
   return {
-    platform: `${backend}, service integrations, and database-backed application components`,
-    frontend: skills.includes("React") ? "React and TypeScript interfaces" : "user-facing application components",
-    database: skills.find((skill) => ["PostgreSQL", "Oracle", "MySQL", "SQL Server", "MongoDB"].includes(skill)) || "data persistence layers",
-    architecture: skills.includes("Microservices") ? "microservices architecture" : "solution architecture"
+    workflow: "customer workflows, operational data, service delivery, and process controls",
+    stakeholders: "business users, product owners, QA, DevOps, and delivery teams",
+    evidence: "workflow maps, validation notes, operational reports, and release readiness checklists"
   };
 }
 
+function roleActions(roleTrack, maturity) {
+  const map = {
+    businessAnalysis: {
+      early: ["Documented requirements", "Mapped workflows", "Validated user stories", "Supported UAT", "Analyzed defects", "Coordinated clarifications"],
+      mid: ["Owned requirements analysis", "Facilitated workshops", "Refined acceptance criteria", "Optimized process flows", "Aligned stakeholders", "Validated release scope"],
+      senior: ["Led discovery sessions", "Translated strategy into requirements", "Drove stakeholder decisions", "Governed UAT readiness", "Improved operating models", "Resolved requirement risks"],
+      lead: ["Led business analysis strategy", "Established requirement governance", "Guided stakeholder alignment", "Prioritized business outcomes", "Mentored analysts", "Directed release readiness"]
+    },
+    workday: {
+      early: ["Documented Workday requirements", "Mapped HR business processes", "Validated configuration changes", "Supported tenant testing", "Analyzed security issues", "Coordinated HRIS clarifications"],
+      mid: ["Owned Workday configuration analysis", "Facilitated HRIS workshops", "Refined business process steps", "Optimized tenant workflows", "Aligned HR stakeholders", "Validated release readiness"],
+      senior: ["Led Workday discovery sessions", "Translated HR strategy into configuration", "Drove tenant readiness decisions", "Governed security validation", "Improved HR operating models", "Resolved Workday release risks"],
+      lead: ["Led Workday solution strategy", "Established configuration governance", "Guided HRIS stakeholder alignment", "Prioritized tenant outcomes", "Mentored Workday analysts", "Directed production readiness"]
+    },
+    devops: {
+      early: ["Supported deployments", "Monitored environments", "Automated routine tasks", "Validated configurations", "Triaged incidents", "Documented runbooks"],
+      mid: ["Owned CI/CD improvements", "Automated deployment workflows", "Optimized monitoring", "Improved release reliability", "Standardized environment controls", "Resolved operational issues"],
+      senior: ["Designed automation strategy", "Led pipeline modernization", "Strengthened observability", "Improved incident response", "Governed cloud readiness", "Reduced deployment risk"],
+      lead: ["Led DevOps operating model", "Directed platform reliability", "Established governance standards", "Mentored engineers", "Aligned automation roadmap", "Owned production resilience"]
+    },
+    product: {
+      early: ["Supported backlog grooming", "Documented feature needs", "Tracked sprint priorities", "Validated user feedback", "Coordinated acceptance checks", "Prepared release notes"],
+      mid: ["Owned backlog refinement", "Prioritized user stories", "Aligned stakeholder needs", "Defined release scope", "Analyzed adoption feedback", "Improved product workflows"],
+      senior: ["Led roadmap planning", "Balanced business priorities", "Drove feature decisions", "Managed release tradeoffs", "Validated product outcomes", "Strengthened stakeholder cadence"],
+      lead: ["Led product strategy execution", "Directed roadmap governance", "Owned prioritization framework", "Mentored product teams", "Aligned leadership stakeholders", "Measured product impact"]
+    },
+    quality: {
+      early: ["Executed test scenarios", "Validated acceptance criteria", "Logged reproducible defects", "Supported regression cycles", "Prepared test evidence", "Coordinated QA clarifications"],
+      mid: ["Owned test planning", "Expanded automation coverage", "Optimized regression scope", "Validated release readiness", "Analyzed defect patterns", "Improved quality checkpoints"],
+      senior: ["Led quality strategy", "Drove automation standards", "Governed release validation", "Reduced defect leakage", "Aligned test coverage", "Mentored QA contributors"],
+      lead: ["Directed quality operating model", "Established validation governance", "Owned release confidence", "Mentored quality teams", "Aligned risk-based testing", "Measured quality outcomes"]
+    },
+    data: {
+      early: ["Prepared data mappings", "Validated report outputs", "Documented source-to-target rules", "Supported dashboard checks", "Reconciled data issues", "Coordinated reporting clarifications"],
+      mid: ["Owned analysis workflows", "Built reporting logic", "Improved dashboard usability", "Validated data quality", "Translated KPI needs", "Streamlined insight delivery"],
+      senior: ["Led analytics discovery", "Defined reporting standards", "Drove KPI alignment", "Improved data governance", "Resolved complex data gaps", "Guided insight adoption"],
+      lead: ["Led data strategy execution", "Established reporting governance", "Directed analytics prioritization", "Mentored analysts", "Aligned executive insights", "Measured decision impact"]
+    },
+    delivery: {
+      early: ["Tracked delivery tasks", "Coordinated sprint updates", "Documented risks", "Supported release planning", "Prepared status reporting", "Facilitated team follow-ups"],
+      mid: ["Owned delivery coordination", "Managed sprint dependencies", "Improved planning cadence", "Aligned cross-functional teams", "Resolved delivery blockers", "Validated release scope"],
+      senior: ["Led delivery governance", "Drove stakeholder decisions", "Managed program risks", "Optimized release execution", "Improved team throughput", "Strengthened communication cadence"],
+      lead: ["Directed delivery operating model", "Established governance routines", "Owned leadership reporting", "Mentored delivery teams", "Aligned strategic priorities", "Measured program outcomes"]
+    },
+    technical: {
+      early: ["Implemented assigned enhancements", "Validated application behavior", "Supported defect resolution", "Documented technical changes", "Coordinated with QA", "Assisted release checks"],
+      mid: ["Owned feature delivery", "Integrated application workflows", "Optimized system behavior", "Clarified requirements", "Resolved production defects", "Supported release readiness"],
+      senior: ["Designed scalable enhancements", "Led technical analysis", "Optimized performance", "Guided code quality", "Resolved complex issues", "Aligned delivery teams"],
+      lead: ["Led solution delivery", "Directed technical roadmap execution", "Established design standards", "Mentored team members", "Owned release readiness", "Resolved critical production risks"]
+    }
+  };
+  const selected = map[roleTrack] || map.technical;
+  return selected[maturity] || selected.early;
+}
+
+function roleArtifacts(roleTrack) {
+  const map = {
+    businessAnalysis: ["BRD", "FRD", "User Stories", "Acceptance Criteria", "UAT", "Process Flows", "Data Validation", "Root Cause Analysis", "Reporting"],
+    workday: ["Workday HCM", "Business Process Configuration", "Calculated Fields", "Custom Reports", "EIB", "Tenant Testing", "Security Groups", "Workday Recruiting", "Payroll Validation"],
+    devops: ["CI/CD", "Infrastructure Automation", "Monitoring", "Incident Resolution", "Reliability Metrics", "Runbooks", "Release Gates", "Deployment Checklists"],
+    product: ["Product Roadmap", "Backlog", "Sprint Goals", "Acceptance Criteria", "Release Notes", "User Feedback", "KPI Reviews", "Prioritization Matrix"],
+    quality: ["Test Strategy", "Regression Suite", "Defect Triage", "Automation Coverage", "UAT Evidence", "Release Validation", "Risk-Based Testing", "Quality Metrics"],
+    data: ["Data Mapping", "Dashboards", "Reporting", "Reconciliation Rules", "Data Validation", "KPI Definitions", "Source-to-Target Mapping", "Insight Briefs"],
+    delivery: ["Delivery Plan", "Risk Register", "Dependency Tracker", "Release Plan", "Status Reporting", "Governance Deck", "SLA Dashboard", "Action Log"],
+    technical: ["APIs", "Microservices", "Database Optimization", "Performance Tuning", "Integration Contracts", "Code Reviews", "Release Validation", "Production Support"]
+  };
+  return map[roleTrack] || map.technical;
+}
+
+function metricBank(roleTrack) {
+  const map = {
+    businessAnalysis: [
+      "reduced requirement rework by 28%",
+      "improved UAT pass rate from 86% to 96%",
+      "cut manual validation effort by 18 hours per month",
+      "improved reporting accuracy by 25%",
+      "reduced stakeholder clarification cycles by 30%",
+      "improved defect triage turnaround by 35%"
+    ],
+    workday: [
+      "reduced configuration rework by 26%",
+      "improved tenant testing pass rate from 87% to 96%",
+      "cut HRIS validation effort by 16 hours per month",
+      "improved report accuracy by 24%",
+      "reduced security access exceptions by 30%",
+      "improved release readiness from 90% to 98%"
+    ],
+    devops: [
+      "reduced deployment rollback risk by 32%",
+      "improved SLA compliance from 92% to 98%",
+      "cut incident response time by 40%",
+      "reduced manual release effort by 22 hours per month",
+      "improved monitoring coverage by 30%",
+      "reduced environment drift by 35%"
+    ],
+    product: [
+      "improved sprint predictability by 24%",
+      "reduced backlog aging by 30%",
+      "increased feature acceptance rate by 22%",
+      "cut release-scope churn by 26%",
+      "improved stakeholder decision turnaround by 35%",
+      "raised adoption visibility across 4 product KPIs"
+    ],
+    quality: [
+      "reduced escaped defects by 40%",
+      "improved regression coverage by 32%",
+      "cut test-cycle effort by 20 hours per release",
+      "improved release validation accuracy by 27%",
+      "reduced defect reopening by 25%",
+      "improved automation stability from 88% to 97%"
+    ],
+    data: [
+      "improved reporting accuracy by 25%",
+      "reduced reconciliation effort by 18 hours per month",
+      "cut dashboard refresh delays by 30%",
+      "improved data quality checks by 35%",
+      "reduced manual report preparation by 22%",
+      "increased KPI visibility across 5 operating metrics"
+    ],
+    delivery: [
+      "improved SLA compliance from 92% to 98%",
+      "reduced delivery blockers by 30%",
+      "cut status-reporting effort by 12 hours per month",
+      "improved release readiness by 28%",
+      "reduced dependency delays by 25%",
+      "increased sprint commitment reliability by 24%"
+    ],
+    technical: [
+      "reduced API response time by 30%",
+      "improved defect resolution time by 35%",
+      "cut manual support effort by 20 hours per month",
+      "improved release stability from 90% to 97%",
+      "reduced database query latency by 28%",
+      "improved production issue triage speed by 32%"
+    ]
+  };
+  return map[roleTrack] || map.technical;
+}
+
+function rotatedItems(items, index, count) {
+  if (!items.length) return [];
+  return Array.from({ length: count }, (_, offset) => items[(index + offset) % items.length]);
+}
+
+function variant(items, index) {
+  return items[index % items.length];
+}
+
+function projectNarrativeFocus(project, index, maturity) {
+  const terms = domainTerms(project.domain);
+  const focusByMaturity = {
+    early: ["execution support", "requirement clarity", "hands-on validation", "team follow-through"],
+    mid: ["workflow ownership", "cross-functional coordination", "process optimization", "delivery predictability"],
+    senior: ["stakeholder decisioning", "release confidence", "risk reduction", "business outcome alignment"],
+    lead: ["strategic direction", "governance", "mentoring", "operating model improvement"]
+  };
+  const pool = focusByMaturity[maturity] || focusByMaturity.early;
+  return {
+    primary: pool[index % pool.length],
+    secondary: pool[(index + 1) % pool.length],
+    domain: terms[index % terms.length],
+    outcome: terms[(index + 2) % terms.length]
+  };
+}
+
+function stakeholderBullet({ project, role, profile, artifacts, index }) {
+  return variant([
+    () => `Partnered with ${profile.stakeholders} at ${project.clientName} to align ${role} decisions with ${profile.workflow}, using ${artifacts[0]} and ${artifacts[1]} to keep delivery grounded in real business needs.`,
+    () => `At ${project.clientName}, translated stakeholder priorities from ${profile.stakeholders} into ${artifacts[0]}, ${artifacts[1]}, and delivery-ready decisions for ${profile.workflow}.`,
+    () => `Facilitated working sessions with ${profile.stakeholders}, turning competing priorities at ${project.clientName} into a shared execution path for ${profile.workflow}.`,
+    () => `Built stakeholder confidence for ${project.clientName} by clarifying scope, risks, and decisions across ${profile.stakeholders} before release commitments were finalized.`
+  ], index)();
+}
+
+function processBullet({ actions, terms, profile, metrics, index }) {
+  return variant([
+    () => `${actions[1]} for ${terms[0]} and ${terms[1]} workflows, turning gaps found in ${profile.evidence} into process changes that ${metrics[0]}.`,
+    () => `Improved the handoff between ${terms[0]} intake and ${terms[1]} validation by standardizing review checkpoints, which ${metrics[0]}.`,
+    () => `${actions[4]} across ${profile.evidence}, then converted recurring blockers into process-flow updates that ${metrics[0]}.`,
+    () => `Streamlined ${terms[0]} review routines by replacing ad hoc follow-ups with artifact-driven checkpoints, helping ${metrics[0]}.`
+  ], index)();
+}
+
+function domainBullet({ project, artifacts, terms, focus, index }) {
+  return variant([
+    () => `Created domain-specific coverage for ${focus.domain} scenarios by connecting ${artifacts[2]}, ${terms[2]}, and ${focus.primary} so the project reflected how ${project.domain || "the business"} teams actually operated.`,
+    () => `Mapped ${terms[2]} scenarios to ${artifacts[2]} and ${artifacts[3]}, giving ${project.domain || "business"} users clearer visibility into ${focus.domain} exceptions.`,
+    () => `Grounded project decisions in ${project.domain || "business"} operations by validating ${focus.domain}, ${terms[2]}, and ${terms[3]} impacts before sprint scope was accepted.`,
+    () => `Turned ${project.domain || "domain"} context into practical delivery guidance by documenting how ${focus.domain} issues affected ${terms[2]} and downstream ${terms[3]} controls.`
+  ], index)();
+}
+
+function executionBullet({ actions, skillPhrase, cloud, metrics, index }) {
+  return variant([
+    () => `${actions[3]} using ${skillPhrase}${cloud ? ` in ${cloud}` : ""}, improving traceability from intake through release validation and helping ${metrics[1]}.`,
+    () => `${actions[0]} with ${skillPhrase}${cloud ? ` across ${cloud}` : ""}, linking execution details to release evidence and helping ${metrics[1]}.`,
+    () => `Applied ${skillPhrase} to move work from analysis into production-ready execution, strengthening validation discipline and helping ${metrics[1]}.`,
+    () => `${actions[2]} through ${skillPhrase}${cloud ? ` on ${cloud}` : ""}, keeping business execution, quality checks, and release outcomes connected while helping ${metrics[1]}.`
+  ], index)();
+}
+
+function improvementBullet({ terms, focus, index }) {
+  return variant([
+    () => `Converted root-cause findings, stakeholder feedback, and operational data into prioritized improvements for ${focus.outcome}, reducing repeated clarifications while protecting delivery quality.`,
+    () => `Analyzed recurring defects and operational friction in ${terms[3]} workflows, then prioritized improvements that made ${focus.outcome} easier to validate.`,
+    () => `Used feedback loops from QA, business users, and support teams to isolate root causes behind ${focus.outcome} issues and prevent repeat defects in later releases.`,
+    () => `Reviewed process gaps affecting ${focus.outcome}, separated true defects from training or data issues, and converted the findings into clearer release actions.`
+  ], index)();
+}
+
+function readinessBullet({ actions, focus, artifacts, index }) {
+  return variant([
+    () => `${actions[5]} with a focus on ${focus.secondary}, documenting decisions, risks, and readiness checkpoints so future releases could move without recreating the same analysis.`,
+    () => `Maintained ${artifacts[0]} updates, decision notes, and readiness checkpoints so teams could reuse context instead of rediscovering prior analysis during each sprint.`,
+    () => `${actions[5]} by capturing assumptions, risks, and validation evidence in plain business language that helped new team members understand ${focus.secondary}.`,
+    () => `Closed each release cycle with practical documentation, open-risk notes, and lessons learned, making ${focus.secondary} visible to delivery and support teams.`
+  ], index)();
+}
+
+function flattenGroupedSkills(groupedSkills) {
+  return unique(Object.values(groupedSkills).flat());
+}
+
+function sentencesFrom(text) {
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function detectJobKeywordGroups(jobDescription) {
+  const text = normalize(jobDescription);
+  const grouped = {};
+  for (const [category, skills] of Object.entries(skillBank)) {
+    const matches = skills.filter((skill) => text.includes(skill.toLowerCase()));
+    if (matches.length) grouped[category] = unique(matches);
+  }
+
+  const businessKeywords = unique([
+    ["stakeholder", "Stakeholder Management"],
+    ["requirements", "Requirements Analysis"],
+    ["business", "Business Alignment"],
+    ["customer", "Customer Experience"],
+    ["production", "Production Support"],
+    ["performance", "Performance Improvement"],
+    ["quality", "Quality Improvement"],
+    ["release", "Release Readiness"]
+  ].filter(([needle]) => text.includes(needle)).map(([, label]) => label));
+
+  const softSkills = unique([
+    ["collaborat", "Collaboration"],
+    ["communicat", "Communication"],
+    ["lead", "Leadership"],
+    ["mentor", "Mentoring"],
+    ["ownership", "Ownership"],
+    ["problem", "Problem Solving"],
+    ["agile", "Agile Collaboration"]
+  ].filter(([needle]) => text.includes(needle)).map(([, label]) => label));
+
+  const domainKeywords = unique([
+    ["health", "Healthcare"],
+    ["telecom", "Telecom"],
+    ["logistics", "Logistics"],
+    ["retail", "Retail"],
+    ["finance", "Finance"],
+    ["bank", "Banking"],
+    ["content", "Content Management"],
+    ["commerce", "Commerce"]
+  ].filter(([needle]) => text.includes(needle)).map(([, label]) => label));
+
+  return {
+    requiredSkills: unique(Object.values(grouped).flat()),
+    preferredSkills: preferredKeywords(jobDescription),
+    businessKeywords,
+    technicalKeywords: unique([
+      ...(grouped["Programming Languages"] || []),
+      ...(grouped["Frameworks and CMS"] || []),
+      ...(grouped["Databases"] || []),
+      ...(grouped["Integration Technologies"] || []),
+      ...(grouped["Search and Indexing"] || [])
+    ]),
+    toolsPlatformsMethodologies: unique([
+      ...(grouped["Cloud Platforms"] || []),
+      ...(grouped["DevOps Tools"] || []),
+      ...(grouped["CI/CD Tools"] || []),
+      ...(grouped["Testing Tools"] || []),
+      ...(grouped["Monitoring Tools"] || []),
+      ...(grouped["Version Control"] || []),
+      ...(grouped["Methodologies"] || []),
+      ...(grouped["Architecture Patterns"] || [])
+    ]),
+    softSkills,
+    domainKeywords
+  };
+}
+
+function preferredKeywords(jobDescription) {
+  return unique(sentencesFrom(jobDescription)
+    .filter((sentence) => /preferred|nice to have|plus|bonus|desired/i.test(sentence))
+    .flatMap((sentence) => {
+      const text = normalize(sentence);
+      return Object.values(skillBank).flat().filter((skill) => text.includes(skill.toLowerCase()));
+    }));
+}
+
+function candidateEvidenceText(data, projects, groupedSkills) {
+  return normalize([
+    data.jobTitle,
+    ...flattenGroupedSkills(groupedSkills),
+    ...projects.flatMap((project) => [project.clientName, project.domain, project.cloud])
+  ].join(" "));
+}
+
+function skillCategory(skill) {
+  return Object.keys(skillBank).find((category) => skillBank[category].includes(skill)) || "";
+}
+
+function classifyRequirement(keyword, candidateText, candidateSkills) {
+  const normalized = normalize(keyword);
+  if (!normalized) return "Missing";
+  if (candidateText.includes(normalized) || candidateSkills.some((skill) => normalize(skill) === normalized)) {
+    return "Strong Match";
+  }
+  const category = skillCategory(keyword);
+  if (category && candidateSkills.some((skill) => skillCategory(skill) === category)) {
+    return "Partial Match";
+  }
+  return "Missing";
+}
+
+function requirementRows(data, projects, groupedSkills, jobKeywordGroups) {
+  const candidateText = candidateEvidenceText(data, projects, groupedSkills);
+  const candidateSkills = flattenGroupedSkills(groupedSkills);
+  const requirements = unique([
+    ...jobKeywordGroups.requiredSkills,
+    ...jobKeywordGroups.preferredSkills,
+    ...jobKeywordGroups.businessKeywords,
+    ...jobKeywordGroups.toolsPlatformsMethodologies,
+    ...jobKeywordGroups.softSkills,
+    ...jobKeywordGroups.domainKeywords
+  ]);
+
+  return requirements.map((keyword) => ({
+    keyword,
+    status: classifyRequirement(keyword, candidateText, candidateSkills)
+  }));
+}
+
+function atsMatchScore(rows) {
+  if (!rows.length) return 0;
+  const score = rows.reduce((sum, row) => {
+    if (row.status === "Strong Match") return sum + 1;
+    if (row.status === "Partial Match") return sum + 0.5;
+    return sum;
+  }, 0);
+  return Math.round((score / rows.length) * 100);
+}
+
+function rowsByStatus(rows, status) {
+  return rows.filter((row) => row.status === status).map((row) => row.keyword);
+}
+
+function contentContains(text, keyword) {
+  return normalize(text).includes(normalize(keyword));
+}
+
+function scoreCoverage(items, text) {
+  const terms = unique(items).filter(Boolean);
+  if (!terms.length) return 100;
+  const hits = terms.filter((item) => contentContains(text, item)).length;
+  return Math.round((hits / terms.length) * 100);
+}
+
+function roleTerminology(roleTrack) {
+  return roleArtifacts(roleTrack);
+}
+
+function contaminationTerms(roleTrack) {
+  const forbidden = {
+    businessAnalysis: ["Spring Boot", "Microservices", "Kafka", "Kubernetes", "Terraform", "Workday Studio", "Workday EIB", "Java APIs"],
+    workday: ["Spring Boot", "Microservices", "Java APIs", "Kafka", "Sitecore", "Coveo", "SXA", "Kubernetes"],
+    devops: ["BRD", "FRD", "Workday HCM", "Calculated Fields", "Payroll Validation", "User Stories"],
+    product: ["Spring Boot", "Terraform", "Workday Studio", "JUnit", "Mockito"],
+    quality: ["Workday Studio", "Terraform", "Product Roadmap", "Payroll Validation"],
+    data: ["Spring Boot", "Kubernetes", "Workday Studio", "Product Roadmap"],
+    delivery: ["Spring Boot", "Workday Studio", "JUnit", "Mockito"],
+    technical: ["Workday HCM", "Payroll Validation", "BRD", "FRD"]
+  };
+  return forbidden[roleTrack] || [];
+}
+
+function contaminationPenalty(roleTrack, resume, jobDescription) {
+  const jd = normalize(jobDescription);
+  return contaminationTerms(roleTrack)
+    .filter((term) => contentContains(resume, term) && !jd.includes(term.toLowerCase()))
+    .length * 8;
+}
+
+function bulletSimilarity(left, right) {
+  const tokens = (text) => unique(normalize(text).match(/[a-z0-9]+/g) || [])
+    .filter((token) => token.length > 3 && !["with", "from", "that", "into", "using", "project"].includes(token));
+  const a = tokens(left);
+  const b = tokens(right);
+  if (!a.length || !b.length) return 0;
+  const intersection = a.filter((token) => b.includes(token)).length;
+  const union = unique([...a, ...b]).length;
+  return intersection / union;
+}
+
+function duplicateScore(projectBlocks) {
+  const bullets = projectBlocks.flatMap((project) => project.bullets);
+  let maxSimilarity = 0;
+  for (let left = 0; left < bullets.length; left += 1) {
+    for (let right = left + 1; right < bullets.length; right += 1) {
+      maxSimilarity = Math.max(maxSimilarity, bulletSimilarity(bullets[left], bullets[right]));
+    }
+  }
+  if (maxSimilarity <= 0.3) return 100;
+  return Math.max(70, Math.round(100 - ((maxSimilarity - 0.3) * 100)));
+}
+
+function recruiterScore(projectBlocks, resume) {
+  const bulletText = projectBlocks.flatMap((project) => project.bullets).join("\n");
+  const projectCount = Math.max(1, projectBlocks.length);
+  const metricCount = (bulletText.match(/\b\d+%|\b\d+ hours|from \d+% to \d+%|\b\d+ product KPIs|\b\d+ operating metrics/g) || []).length;
+  const stakeholderCount = (bulletText.match(/stakeholder|product owner|business user|operations manager|support manager|release team|QA|HRIS/gi) || []).length;
+  const domainCount = (bulletText.match(/claims|member services|patient data|supply chain|transportation|inventory|network operations|provisioning|connectivity|transaction|tenant|payroll|security/gi) || []).length;
+  const genericPenalty = (resume.match(/responsible for|worked on|involved in|participated in/gi) || []).length * 5;
+  const base = Math.min(100, 70 + (metricCount >= projectCount * 2 ? 15 : 5) + (stakeholderCount >= projectCount ? 7 : 0) + (domainCount >= projectCount ? 8 : 0));
+  return Math.max(0, base - genericPenalty);
+}
+
+function projectQualityScore(projectBlocks, resume) {
+  const projectCount = Math.max(1, projectBlocks.length);
+  const completeProjects = projectBlocks.filter((project) => {
+    const text = project.bullets.join("\n");
+    const metrics = (text.match(/\b\d+%|\b\d+ hours|from \d+% to \d+%|\b\d+ product KPIs|\b\d+ operating metrics/g) || []).length;
+    const hasStakeholder = /stakeholder|product owner|business user|operations manager|support manager|release team|QA|HRIS/i.test(text);
+    const hasProcess = /process|workflow|handoff|checkpoint|root-cause|root cause|gap|validation/i.test(text);
+    const hasDomain = /claims|member services|patient data|supply chain|transportation|inventory|network operations|provisioning|connectivity|transaction|tenant|payroll|security|compliance/i.test(text);
+    const hasExecution = /using|applied|release|execution|UAT|BRD|FRD|API|CI\/CD|configuration|testing|reporting|dashboard/i.test(text);
+    return metrics >= 2 && hasStakeholder && hasProcess && hasDomain && hasExecution;
+  }).length;
+  const sectionQuality = Math.round((completeProjects / projectCount) * 100);
+  const structure = /Summary:|Professional Summary:/i.test(resume) && /Responsibilities:/i.test(resume) ? 100 : 90;
+  return Math.round((sectionQuality * 0.85) + (structure * 0.15));
+}
+
+function progressionScore(projectBlocks) {
+  const roles = projectBlocks.map((project) => normalize(project.role));
+  if (!roles.length) return 100;
+  const latest = roles[0] || "";
+  const earliest = roles[roles.length - 1] || "";
+  const latestStrong = /lead|senior|principal|manager|owner/.test(latest);
+  const earliestJunior = /junior|associate|analyst|developer|engineer|consultant/.test(earliest);
+  return latestStrong && earliestJunior ? 100 : 90;
+}
+
+function qualityGateScore({ data, resume, projectBlocks, groupedSkills, jobKeywordGroups }) {
+  const roleTrack = inferRoleTrack(data.jobTitle);
+  const requirements = unique([
+    ...jobKeywordGroups.requiredSkills,
+    ...jobKeywordGroups.preferredSkills,
+    ...jobKeywordGroups.businessKeywords,
+    ...jobKeywordGroups.technicalKeywords,
+    ...jobKeywordGroups.toolsPlatformsMethodologies,
+    ...jobKeywordGroups.softSkills,
+    ...jobKeywordGroups.domainKeywords
+  ]);
+  const keywordCoverage = scoreCoverage(requirements, resume);
+  const roleAlignment = scoreCoverage(roleTerminology(roleTrack), resume);
+  const skillsAlignment = scoreCoverage(flattenGroupedSkills(groupedSkills), resume);
+  const recruiterReadability = recruiterScore(projectBlocks, resume);
+  const projectQuality = projectQualityScore(projectBlocks, resume);
+  const authenticity = duplicateScore(projectBlocks);
+  const careerProgression = progressionScore(projectBlocks);
+  const penalty = contaminationPenalty(roleTrack, resume, data.jobDescription);
+
+  return Math.max(0, Math.min(100, Math.round(
+    (keywordCoverage * 0.25) +
+    (roleAlignment * 0.2) +
+    (skillsAlignment * 0.15) +
+    (recruiterReadability * 0.15) +
+    (projectQuality * 0.1) +
+    (authenticity * 0.1) +
+    (careerProgression * 0.05) -
+    penalty
+  )));
+}
+
+function qualityGateReport({ data, resume, projectBlocks, groupedSkills, jobKeywordGroups }) {
+  const roleTrack = inferRoleTrack(data.jobTitle);
+  const requirements = unique([
+    ...jobKeywordGroups.requiredSkills,
+    ...jobKeywordGroups.preferredSkills,
+    ...jobKeywordGroups.businessKeywords,
+    ...jobKeywordGroups.technicalKeywords,
+    ...jobKeywordGroups.toolsPlatformsMethodologies,
+    ...jobKeywordGroups.softSkills,
+    ...jobKeywordGroups.domainKeywords
+  ]);
+  const keywordCoverage = scoreCoverage(requirements, resume);
+  const roleAlignment = scoreCoverage(roleTerminology(roleTrack), resume);
+  const skillsAlignment = scoreCoverage(flattenGroupedSkills(groupedSkills), resume);
+  const recruiter = recruiterScore(projectBlocks, resume);
+  const authenticity = duplicateScore(projectBlocks);
+  const projectQuality = projectQualityScore(projectBlocks, resume);
+  const careerProgression = progressionScore(projectBlocks);
+  const roleContamination = contaminationPenalty(roleTrack, resume, data.jobDescription);
+  const atsScore = qualityGateScore({ data, resume, projectBlocks, groupedSkills, jobKeywordGroups });
+
+  return {
+    atsScore,
+    authenticity,
+    careerProgression,
+    keywordCoverage,
+    projectQuality,
+    recruiter,
+    requirements,
+    roleAlignment,
+    roleContamination,
+    skillsAlignment
+  };
+}
+
+function passesFinalGate(report) {
+  return report.atsScore >= 95 &&
+    report.recruiter >= 95 &&
+    report.roleAlignment >= 95 &&
+    report.authenticity >= 90 &&
+    report.keywordCoverage >= 95 &&
+    report.projectQuality >= 90 &&
+    report.roleContamination <= 5;
+}
+
+function missingCoverageTerms(report, resume, roleTrack, jobDescription) {
+  const forbidden = contaminationTerms(roleTrack).filter((term) => !normalize(jobDescription).includes(term.toLowerCase()));
+  return unique([
+    ...report.requirements,
+    ...roleTerminology(roleTrack)
+  ])
+    .filter((term) => !contentContains(resume, term))
+    .filter((term) => !forbidden.some((blocked) => normalize(blocked) === normalize(term)))
+    .slice(0, 10);
+}
+
 function bulletSet(project, level, skills, jobMap) {
-  const stack = technologyStack(skills, jobMap);
-  const platform = stack.platform;
-  const frontend = stack.frontend;
-  const database = stack.database;
+  const roleTrack = inferRoleTrack(form.elements.jobTitle.value);
+  const actions = roleActions(roleTrack, level);
+  const terms = domainTerms(project.domain);
+  const role = cleanRoleTitle(form.elements.jobTitle.value);
+  const index = project.sequence || 0;
+  const topSkills = rotatedItems(skills, index, 4);
+  const skillPhrase = topSkills.length ? topSkills.join(", ") : "target-role practices";
   const cloud = project.cloud || skills.find((skill) => ["AWS", "Azure", "GCP"].includes(skill));
-  const architecture = stack.architecture;
-  const domainPurpose = `${project.domain} application used to support customer-facing operations, internal business teams, and high-volume content or transaction workflows`;
+  const focus = projectNarrativeFocus(project, index, level);
+  const profile = domainProfile(project.domain);
+  const artifacts = rotatedItems(roleArtifacts(roleTrack), index * 2, 4);
+  const metrics = rotatedItems(metricBank(roleTrack), index * 2, 2);
+  const context = {
+    actions,
+    artifacts,
+    cloud,
+    focus,
+    index,
+    metrics,
+    profile,
+    project,
+    role,
+    skillPhrase,
+    terms
+  };
 
-  const early = [
-    `Developed assigned modules for a ${domainPurpose}, following sprint priorities, coding standards, and guidance from senior engineers.`,
-    `Built and updated presentation components, validation rules, data mappings, and reusable service logic using ${platform}.`,
-    `Implemented bug fixes for ${project.domain} workflows by analyzing defects, reproducing issues, updating code, and validating fixes with QA.`,
-    `Created unit test coverage and supported regression testing for content authoring, page rendering, integration, and data validation scenarios.`,
-    `Assisted with deployment validation, environment checks, documentation updates, and production issue triage during planned releases.`,
-    `Collaborated with developers, QA analysts, and business users to understand expected behavior and deliver stable enhancements within sprint timelines.`
+  return [
+    stakeholderBullet(context),
+    processBullet(context),
+    domainBullet(context),
+    executionBullet(context),
+    improvementBullet(context),
+    readinessBullet(context)
   ];
-
-  const mid = [
-    `Owned end-to-end feature development for a ${domainPurpose}, converting business requirements into working application functionality.`,
-    `Developed ${frontend}, reusable components, content templates, service integrations, and data-driven workflows using ${platform}.`,
-    `Integrated internal and external APIs for ${project.domain} workflows with structured logging, error handling, validation, and retry-ready service patterns.`,
-    `Worked with product owners and business users to clarify acceptance criteria, identify edge cases, and align implementation with real application usage.`,
-    `Coordinated with QA to review test scenarios, resolve defects, validate regression areas, and support release readiness across lower environments.`,
-    `Enhanced existing components through refactoring, query tuning, cache-aware changes, and defect resolution to improve maintainability and production stability.`,
-    `Supported deployment activities${cloud ? ` in ${cloud}` : ""} by validating configuration changes, reviewing release notes, and monitoring post-release behavior.`
-  ];
-
-  const senior = [
-    `Designed and delivered scalable enhancements for a ${domainPurpose}, taking ownership from requirement analysis through release validation.`,
-    `Built content models, presentation components, integration layers, and reusable application services using ${platform}.`,
-    `Participated in ${architecture} discussions, technical feasibility reviews, API contract definition, data modeling, and dependency analysis for high-priority releases.`,
-    `Optimized page rendering, service calls, search behavior, caching strategy, and database access patterns to improve response time and production reliability.`,
-    `Led code reviews, mentored team members, and guided implementation quality across component design, error handling, logging, and test coverage.`,
-    `Partnered with QA, DevOps, product owners, and business stakeholders to validate releases, resolve defects, and support production readiness${cloud ? ` on ${cloud}` : ""}.`,
-    `Investigated production issues by reviewing logs, configurations, content setup, and integration behavior, then delivered fixes with clear root-cause notes.`
-  ];
-
-  const lead = [
-    `Led technical delivery for a ${domainPurpose} for ${project.clientName}, owning solution design, development direction, and release readiness.`,
-    `Translated product roadmap items into technical tasks, clarified implementation scope, and guided the team through design, development, testing, and production rollout.`,
-    `Architected and implemented ${architecture} solutions using ${platform}${cloud ? ` and ${cloud}` : ""}, balancing scalability, maintainability, authoring flexibility, and delivery timelines.`,
-    `Directed component design, content modeling, API integration strategy, code review standards, performance tuning, and production support practices across the engineering team.`,
-    `Streamlined CI/CD readiness, automated testing coverage, configuration validation, monitoring, and incident response workflows to improve deployment quality.`,
-    `Collaborated with product owners, architects, QA leads, DevOps engineers, and business stakeholders to translate roadmap priorities into technically sound delivery plans.`,
-    `Resolved complex production issues by coordinating triage, analyzing application logs and integration dependencies, identifying root cause, and delivering permanent fixes.`
-  ];
-
-  let bullets = { early, mid, senior, lead }[level];
-  if (jobMap.testing && !bullets.some((line) => /test/i.test(line))) {
-    bullets = [...bullets, "Expanded automated test coverage for critical user journeys and service-layer logic to improve regression confidence."];
-  }
-  if (jobMap.devops && !bullets.some((line) => /CI\/CD|deployment/i.test(line))) {
-    bullets = [...bullets, "Supported CI/CD pipeline validation and release coordination across lower environments and production deployments."];
-  }
-  return bullets;
 }
 
 function buildExperience(projects, years, groupedSkills, jobMap) {
@@ -795,13 +1377,14 @@ function buildProjectBlocks(projects, years, groupedSkills, jobMap) {
   return projects.map((project, index) => {
     const level = careerLevel(Number(years), index, projects.length);
     const bullets = bulletSet(project, level, allSkills, jobMap).map((line) => `- ${line}`);
+    const role = suggestedDesignation(Number(years), index);
     const text = `Client: ${project.clientName}                             ${project.duration}
-Role: ${project.designation || suggestedDesignation(Number(years), index)}
+Role: ${role}
 Responsibilities:
 ${bullets.join("\n")}`;
     return {
       ...project,
-      role: project.designation || suggestedDesignation(Number(years), index),
+      role,
       bullets,
       text
     };
@@ -858,14 +1441,10 @@ function populateTemplate(template, sections) {
   return resume.replace(/\n{4,}/g, "\n\n\n").trim();
 }
 
-function generateResumeArtifacts(data) {
-  alignProjectTimeline();
-  const projects = collectProjects();
-  const jobMap = analyzeJob(data.jobDescription);
-  const groupedSkills = detectSkills(data.jobDescription, data.template, projects);
-  const summary = buildSummary({ ...data, projects, groupedSkills, jobMap });
-  const summaryLineList = summaryLines({ ...data, projects, groupedSkills, jobMap });
-  const skills = buildSkillMatrix(groupedSkills);
+function buildResumeDraft(data, projects, groupedSkills, jobMap, correctionTerms = []) {
+  const summary = buildSummary({ ...data, projects, groupedSkills, jobMap, correctionTerms });
+  const summaryLineList = summaryLines({ ...data, projects, groupedSkills, jobDescription: data.jobDescription, correctionTerms });
+  const skills = buildSkillMatrix(groupedSkills, data.jobDescription);
   const skillLines = skills.split("\n").filter(Boolean);
   const projectBlocks = buildProjectBlocks(projects, data.years, groupedSkills, jobMap);
   const experience = projectBlocks.map((project) => project.text).join("\n\n");
@@ -877,14 +1456,63 @@ function generateResumeArtifacts(data) {
   });
 
   return {
-    jobTitle: data.jobTitle,
-    summary,
-    summaryLines: summaryLineList,
-    skills,
-    skillLines,
     experience,
     projectBlocks,
-    resume
+    resume,
+    skillLines,
+    skills,
+    summary,
+    summaryLines: summaryLineList
+  };
+}
+
+function generateResumeArtifacts(data) {
+  alignProjectTimeline();
+  const projects = collectProjects();
+  const jobMap = analyzeJob(data.jobDescription);
+  const groupedSkills = detectSkills(data.jobDescription, data.template, projects);
+  const jobKeywordGroups = detectJobKeywordGroups(data.jobDescription);
+  const roleTrack = inferRoleTrack(data.jobTitle);
+  let correctionTerms = [];
+  let draft = null;
+  let report = null;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    draft = buildResumeDraft(data, projects, groupedSkills, jobMap, correctionTerms);
+    report = qualityGateReport({
+      data,
+      resume: draft.resume,
+      projectBlocks: draft.projectBlocks,
+      groupedSkills,
+      jobKeywordGroups
+    });
+    if (passesFinalGate(report)) break;
+    const nextTerms = missingCoverageTerms(report, draft.resume, roleTrack, data.jobDescription);
+    const merged = unique([...correctionTerms, ...nextTerms]);
+    if (merged.length === correctionTerms.length) break;
+    correctionTerms = merged;
+  }
+
+  const matchRows = requirementRows(data, projects, groupedSkills, jobKeywordGroups);
+  const score = report?.atsScore || 0;
+  const missing = rowsByStatus(matchRows, "Missing");
+  const finalOutput = `ATS SCORE: ${score}%\n\n${draft.resume}`;
+
+  return {
+    jobTitle: data.jobTitle,
+    atsMatchScore: score,
+    jobKeywordGroups,
+    matchRows,
+    missingSkills: missing,
+    qualityReport: report,
+    summary: draft.summary,
+    summaryLines: draft.summaryLines,
+    skills: draft.skills,
+    skillLines: draft.skillLines,
+    experience: draft.experience,
+    projectBlocks: draft.projectBlocks,
+    finalResume: draft.resume,
+    resume: finalOutput
   };
 }
 
