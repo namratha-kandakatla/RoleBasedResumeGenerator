@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Role Based Resume Generating Platform</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace" aria-label="Resume engineering workspace">
+        <aside class="panel input-panel">
+          <div class="brand-row">
+            <div class="brand-mark" aria-hidden="true">R</div>
+            <div>
+              <h1>Role Based Resume Generating Platform</h1>
+            </div>
+            <button class="icon-button" id="resetBtn" title="Reset workspace" aria-label="Reset workspace">
+              <span aria-hidden="true">↻</span>
+            </button>
+          </div>
+
+          <form id="resumeForm">
+            <div class="field-grid two">
+              <label>
+                <span>Target job title</span>
+                <input name="jobTitle" value="Sitecore Developer" required />
+              </label>
+              <label>
+                <span>Years of experience</span>
+                <input name="years" type="number" min="0" max="35" step="1" value="8" required />
+              </label>
+            </div>
+
+            <label>
+              <span>Target job description</span>
+              <textarea name="jobDescription" rows="7" required>We are seeking a Sitecore Developer with experience in Sitecore XP/XM, C#, .NET, ASP.NET MVC, Helix principles, SXA, content templates, renderings, workflows, integrations, search, CI/CD, testing, and production support. The candidate should collaborate with product, UX, QA, and DevOps teams to deliver scalable digital experience solutions.</textarea>
+            </label>
+
+            <div class="template-tools">
+              <label class="file-picker">
+                <input id="jobDescriptionFile" type="file" accept=".txt,.md,.html,.docx,.pdf,.doc" />
+                <span>Upload job description doc</span>
+              </label>
+            </div>
+
+            <div class="template-tools">
+              <label class="file-picker">
+                <input id="templateFile" type="file" accept=".txt,.md,.html,.docx,.pdf,.doc" />
+                <span>Upload resume template</span>
+              </label>
+              <button type="button" id="useSampleBtn">Sample template</button>
+            </div>
+
+            <label>
+              <span>Resume template</span>
+              <textarea name="template" rows="10" spellcheck="false"></textarea>
+            </label>
+
+            <div class="projects-header">
+              <div>
+                <h2>Project history</h2>
+                <p>Durations align automatically with total years of experience.</p>
+              </div>
+              <button type="button" id="addProjectBtn">Add project</button>
+            </div>
+            <div id="projects"></div>
+
+            <button class="primary-action" type="submit">Generate resume</button>
+          </form>
+        </aside>
+
+        <section class="panel output-panel" aria-label="Generated resume">
+          <div class="output-toolbar">
+            <div>
+              <h2>Skilled Resume</h2>
+              <p id="statusText">Ready</p>
+            </div>
+            <div class="toolbar-actions">
+              <button id="copyBtn" type="button" title="Copy resume">Copy</button>
+              <button id="downloadBtn" type="button" title="Download resume">Download</button>
+            </div>
+          </div>
+          <pre id="resumeOutput" class="resume-output" aria-live="polite"></pre>
+        </section>
+      </section>
+    </main>
+
+    <template id="projectTemplate">
+      <article class="project-card">
+        <div class="project-card-header">
+          <h3>Project</h3>
+          <button type="button" class="remove-project" title="Remove project" aria-label="Remove project">×</button>
+        </div>
+        <div class="field-grid two">
+          <label>
+            <span>Client name</span>
+            <input name="clientName" required />
+          </label>
+          <label>
+            <span>Designation</span>
+            <input name="designation" required />
+          </label>
+          <label>
+            <span>Domain</span>
+            <input name="domain" required />
+          </label>
+          <label>
+            <span>Cloud provider</span>
+            <input name="cloud" placeholder="AWS, Azure, GCP" />
+          </label>
+        </div>
+      </article>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

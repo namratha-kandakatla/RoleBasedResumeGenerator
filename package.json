@@ -1,0 +1,10 @@
+{
+  "name": "role-based-resume-generating-platform",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "mkdir -p public && cp index.html styles.css app.js public/",
+    "vercel-build": "npm run build",
+    "start": "python3 -m http.server 4173"
+  }
+}
