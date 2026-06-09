@@ -5,9 +5,16 @@ const outputEl = document.querySelector("#resumeOutput");
 const statusText = document.querySelector("#statusText");
 const templateArea = form.elements.template;
 const yearsInput = form.elements.years;
+const templateListEl = document.querySelector("#templateList");
+const templateUploadValidation = document.querySelector("#templateUploadValidation");
+const copyBtn = document.querySelector("#copyBtn");
+const downloadBtn = document.querySelector("#downloadBtn");
 let uploadedDocxTemplate = null;
 let latestResumeArtifacts = null;
 let generatedParagraphId = 0x10000000;
+let storedTemplates = [];
+let activeTemplateId = null;
+let resumeReady = false;
 
 const sampleTemplate = `Namratha K
 [Insert Job Title Here]+1 (913)-253-6619 | namratha.k0322@gmail.com
@@ -96,6 +103,7 @@ function addProject(values = {}) {
     if (projectsEl.children.length > 1) {
       node.remove();
       alignProjectTimeline();
+      markDraftChanged();
     }
   });
   projectsEl.appendChild(node);
@@ -888,31 +896,213 @@ function formData() {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+function sanitizeFilePart(value, fallback) {
+  const cleaned = String(value || "")
+    .replace(/\[[^\]]+\]/g, "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_-]+/gi, "")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 60);
+  return cleaned || fallback;
+}
+
+function downloadFileName(artifacts, extension) {
+  const name = sanitizeFilePart(form.elements.candidateName.value, "Candidate");
+  const jobTitle = sanitizeFilePart(artifacts.jobTitle || form.elements.jobTitle.value, "Resume");
+  return `${name}_${jobTitle}.${extension}`;
+}
+
+function syncActions() {
+  const canUseResume = resumeReady && !!latestResumeArtifacts && !!outputEl.textContent.trim();
+  copyBtn.disabled = !canUseResume;
+  downloadBtn.disabled = !canUseResume || !uploadedDocxTemplate;
+  copyBtn.title = canUseResume ? "Copy resume" : "Generate resume first";
+  downloadBtn.title = canUseResume
+    ? uploadedDocxTemplate ? "Download resume" : "Select an uploaded .docx template to download"
+    : "Generate resume first";
+}
+
+function setStatus(message = "", state = "neutral") {
+  statusText.textContent = message;
+  statusText.dataset.state = state;
+  syncActions();
+}
+
+function invalidateGeneratedResume(message = "No resume generated yet.") {
+  latestResumeArtifacts = null;
+  resumeReady = false;
+  outputEl.textContent = "";
+  setStatus(message, message ? "neutral" : "neutral");
+}
+
+function activeTemplate() {
+  return storedTemplates.find((template) => template.id === activeTemplateId) || null;
+}
+
+function updateUploadedValidation(templates = storedTemplates) {
+  if (!templateUploadValidation) return;
+  templateUploadValidation.textContent = templates.length
+    ? `Uploaded: ${templates.map((template) => template.name).join(", ")}`
+    : "";
+}
+
+function setActiveTemplate(templateId, options = {}) {
+  const selected = storedTemplates.find((template) => template.id === templateId);
+  if (!selected) return;
+  activeTemplateId = selected.id;
+  templateArea.value = selected.text;
+  uploadedDocxTemplate = selected.docxBuffer ? {
+    name: selected.name,
+    buffer: selected.docxBuffer
+  } : null;
+  invalidateGeneratedResume("");
+  setStatus("template_uploaded", "success");
+  if (!options.silentValidation) {
+    updateUploadedValidation();
+  }
+  renderTemplateList();
+}
+
+function renderTemplateList() {
+  if (!templateListEl) return;
+  templateListEl.innerHTML = "";
+  storedTemplates.forEach((template) => {
+    const label = document.createElement("label");
+    label.className = "template-item";
+    if (template.id === activeTemplateId) label.classList.add("is-active");
+
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "activeTemplate";
+    input.value = template.id;
+    input.checked = template.id === activeTemplateId;
+    input.addEventListener("change", () => setActiveTemplate(template.id));
+
+    const details = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = template.name;
+    const status = document.createElement("span");
+    status.textContent = template.id === activeTemplateId ? "Active Template" : "Uploaded - select to use";
+    details.append(name, status);
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "remove-template";
+    removeButton.textContent = "Remove";
+    removeButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      removeTemplate(template.id);
+    });
+
+    label.append(input, details, removeButton);
+    templateListEl.appendChild(label);
+  });
+}
+
+function removeTemplate(templateId) {
+  const removedActive = templateId === activeTemplateId;
+  storedTemplates = storedTemplates.filter((template) => template.id !== templateId);
+  if (removedActive) {
+    uploadedDocxTemplate = null;
+    activeTemplateId = null;
+    if (storedTemplates.length) {
+      updateUploadedValidation();
+      setActiveTemplate(storedTemplates[0].id, { silentValidation: true });
+    } else {
+      templateArea.value = "";
+      updateUploadedValidation();
+      invalidateGeneratedResume("No resume generated yet.");
+    }
+  } else {
+    updateUploadedValidation();
+    renderTemplateList();
+  }
+}
+
+function validateResumeInputs(data) {
+  const missing = [];
+  if (!String(data.jobTitle || "").trim()) missing.push("target job title");
+  if (!String(data.years || "").trim()) missing.push("years of experience");
+  if (!String(data.jobDescription || "").trim()) missing.push("target job description");
+  if (!String(data.template || "").trim()) missing.push("resume template");
+  if (!collectProjects().length) missing.push("at least one project");
+  if (missing.length) {
+    return `Required: ${missing.join(", ")}.`;
+  }
+  const years = Number(data.years);
+  if (!Number.isFinite(years) || years < 0 || years > 35) {
+    return "Years of experience must be a number between 0 and 35.";
+  }
+  return "";
+}
+
+function markDraftChanged() {
+  if (resumeReady || latestResumeArtifacts) {
+    invalidateGeneratedResume("Changes pending. Generate resume again.");
+  }
+}
+
 function seed() {
   uploadedDocxTemplate = null;
   latestResumeArtifacts = null;
-  templateArea.value = sampleTemplate;
+  resumeReady = false;
+  storedTemplates = [];
+  activeTemplateId = null;
+  form.elements.candidateName.value = "";
+  templateArea.value = "";
+  form.elements.jobTitle.value = "";
+  form.elements.years.value = "";
+  form.elements.jobDescription.value = "";
   projectsEl.innerHTML = "";
   defaultProjects.forEach((project) => addProject(project));
   alignProjectTimeline();
   outputEl.textContent = "";
-  statusText.textContent = "Ready";
+  if (templateUploadValidation) templateUploadValidation.textContent = "";
+  setStatus("", "neutral");
+  renderTemplateList();
 }
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  latestResumeArtifacts = generateResumeArtifacts(formData());
+  const data = formData();
+  const validationMessage = validateResumeInputs(data);
+  if (validationMessage) {
+    resumeReady = false;
+    latestResumeArtifacts = null;
+    outputEl.textContent = "";
+    setStatus(validationMessage, "error");
+    return;
+  }
+  latestResumeArtifacts = generateResumeArtifacts(data);
+  resumeReady = true;
   outputEl.textContent = latestResumeArtifacts.resume;
-  statusText.textContent = "Generated with year-aligned project experience";
+  setStatus("resume_ready", "success");
 });
 
-document.querySelector("#addProjectBtn").addEventListener("click", () => addProject());
+document.querySelector("#addProjectBtn").addEventListener("click", () => {
+  addProject();
+  markDraftChanged();
+});
 document.querySelector("#useSampleBtn").addEventListener("click", () => {
   uploadedDocxTemplate = null;
+  activeTemplateId = null;
   templateArea.value = sampleTemplate;
+  if (templateUploadValidation) templateUploadValidation.textContent = "Sample template loaded";
+  invalidateGeneratedResume("No resume generated yet.");
+  renderTemplateList();
 });
-document.querySelector("#resetBtn").addEventListener("click", seed);
-yearsInput.addEventListener("input", alignProjectTimeline);
+document.querySelector("#resetBtn")?.addEventListener("click", seed);
+yearsInput.addEventListener("input", () => {
+  alignProjectTimeline();
+  markDraftChanged();
+});
+form.elements.jobTitle.addEventListener("input", markDraftChanged);
+form.elements.jobDescription.addEventListener("input", markDraftChanged);
+templateArea.addEventListener("input", markDraftChanged);
+projectsEl.addEventListener("input", markDraftChanged);
 
 document.querySelector("#jobDescriptionFile").addEventListener("change", async (event) => {
   const [file] = event.target.files;
@@ -921,57 +1111,85 @@ document.querySelector("#jobDescriptionFile").addEventListener("change", async (
     const text = await extractFileText(file);
     if (!text.trim()) throw new Error("No readable text was found in this file.");
     form.elements.jobDescription.value = text;
-    statusText.textContent = `Loaded job description from ${file.name}`;
+    latestResumeArtifacts = null;
+    resumeReady = false;
+    outputEl.textContent = "";
+    setStatus(activeTemplateId ? "template_uploaded" : "", activeTemplateId ? "success" : "neutral");
   } catch (error) {
-    statusText.textContent = error.message;
+    setStatus(error.message, "error");
   }
 });
 
 document.querySelector("#templateFile").addEventListener("change", async (event) => {
-  const [file] = event.target.files;
-  if (!file) return;
+  const files = [...event.target.files];
+  if (!files.length) return;
   try {
-    uploadedDocxTemplate = null;
-    const text = await extractFileText(file);
-    if (!text.trim()) throw new Error("No readable text was found in this template.");
-    templateArea.value = text;
-    if (file.name.toLowerCase().endsWith(".docx")) {
-      uploadedDocxTemplate = {
+    const addedTemplates = [];
+    for (const file of files) {
+      const text = await extractFileText(file);
+      if (!text.trim()) throw new Error(`No readable text was found in ${file.name}.`);
+      const docxBuffer = file.name.toLowerCase().endsWith(".docx") ? await file.arrayBuffer() : null;
+      const template = {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
         name: file.name,
-        buffer: await file.arrayBuffer()
+        text,
+        docxBuffer
       };
+      addedTemplates.push(template);
     }
-    statusText.textContent = `Loaded resume template from ${file.name}`;
+    storedTemplates = [...storedTemplates, ...addedTemplates];
+    setActiveTemplate(addedTemplates[0].id);
+    updateUploadedValidation();
+    setStatus("template_uploaded", "success");
+    event.target.value = "";
   } catch (error) {
-    statusText.textContent = error.message;
+    setStatus(error.message, "error");
   }
 });
 
 document.querySelector("#copyBtn").addEventListener("click", async () => {
-  if (!outputEl.textContent.trim()) return;
+  if (copyBtn.disabled || !outputEl.textContent.trim()) return;
   await navigator.clipboard.writeText(outputEl.textContent);
-  statusText.textContent = "Copied";
+  setStatus("resume_ready", "success");
 });
 
 document.querySelector("#downloadBtn").addEventListener("click", async () => {
-  const artifacts = latestResumeArtifacts || generateResumeArtifacts(formData());
-  latestResumeArtifacts = artifacts;
-  if (!outputEl.textContent.trim()) {
-    outputEl.textContent = artifacts.resume;
+  if (!resumeReady || !latestResumeArtifacts || !outputEl.textContent.trim()) {
+    setStatus("resume_required: click Generate resume first", "error");
+    return;
   }
+  const artifacts = latestResumeArtifacts;
 
   if (!uploadedDocxTemplate) {
-    statusText.textContent = "Upload your .docx resume template first to download in the exact Word format.";
+    setStatus("template_required: select an uploaded .docx resume template first", "error");
     return;
   }
 
   try {
     const docxBlob = await buildDocxFromUploadedTemplate(artifacts);
-    downloadBlob(docxBlob, "skilled-resume.docx");
-    statusText.textContent = "Downloaded skilled resume in uploaded Word template format";
+    downloadBlob(docxBlob, downloadFileName(artifacts, "docx"));
+    setStatus("resume_ready", "success");
   } catch (error) {
-    statusText.textContent = error.message;
+    setStatus(error.message, "error");
   }
 });
 
+function updateStatusTone() {
+  const value = statusText.textContent.toLowerCase();
+  if (/error|could not|no readable|failed|upload your|template_required|resume_required|required/.test(value)) {
+    statusText.dataset.state = "error";
+  } else if (/downloaded|generated|loaded|copied|uploaded|resume_ready|resume_copied|resume_downloaded/.test(value)) {
+    statusText.dataset.state = "success";
+  } else {
+    statusText.dataset.state = "neutral";
+  }
+}
+
+new MutationObserver(updateStatusTone).observe(statusText, {
+  childList: true,
+  characterData: true,
+  subtree: true
+});
+
 seed();
+updateStatusTone();

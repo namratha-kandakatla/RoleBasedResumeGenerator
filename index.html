@@ -8,63 +8,95 @@
   </head>
   <body>
     <main class="app-shell">
+      <header class="app-header">
+        <div class="app-title-group">
+          <div class="brand-mark" aria-hidden="true">
+            <svg class="doc-icon" viewBox="0 0 32 32" focusable="false">
+              <path class="doc-page" d="M8 3.5h11.5L26 10v18.5H8z"></path>
+              <path class="doc-fold" d="M19.5 3.5V10H26"></path>
+              <path d="M12 15h8"></path>
+              <path d="M12 19h10"></path>
+              <path d="M12 23h7"></path>
+              <path d="M10.5 8.5h5"></path>
+            </svg>
+          </div>
+          <div>
+            <h1>Role Based Resume Generating Platform</h1>
+          </div>
+        </div>
+      </header>
+
       <section class="workspace" aria-label="Resume engineering workspace">
         <aside class="panel input-panel">
           <div class="brand-row">
-            <div class="brand-mark" aria-hidden="true">R</div>
-            <div>
-              <h1>Role Based Resume Generating Platform</h1>
-            </div>
-            <button class="icon-button" id="resetBtn" title="Reset workspace" aria-label="Reset workspace">
-              <span aria-hidden="true">↻</span>
-            </button>
+            <h2>Resume Inputs</h2>
           </div>
 
-          <form id="resumeForm">
-            <div class="field-grid two">
-              <label>
-                <span>Target job title</span>
-                <input name="jobTitle" value="Sitecore Developer" required />
-              </label>
-              <label>
-                <span>Years of experience</span>
-                <input name="years" type="number" min="0" max="35" step="1" value="8" required />
-              </label>
-            </div>
-
-            <label>
-              <span>Target job description</span>
-              <textarea name="jobDescription" rows="7" required>We are seeking a Sitecore Developer with experience in Sitecore XP/XM, C#, .NET, ASP.NET MVC, Helix principles, SXA, content templates, renderings, workflows, integrations, search, CI/CD, testing, and production support. The candidate should collaborate with product, UX, QA, and DevOps teams to deliver scalable digital experience solutions.</textarea>
-            </label>
-
-            <div class="template-tools">
-              <label class="file-picker">
-                <input id="jobDescriptionFile" type="file" accept=".txt,.md,.html,.docx,.pdf,.doc" />
-                <span>Upload job description doc</span>
-              </label>
-            </div>
-
-            <div class="template-tools">
-              <label class="file-picker">
-                <input id="templateFile" type="file" accept=".txt,.md,.html,.docx,.pdf,.doc" />
-                <span>Upload resume template</span>
-              </label>
-              <button type="button" id="useSampleBtn">Sample template</button>
-            </div>
-
-            <label>
-              <span>Resume template</span>
-              <textarea name="template" rows="10" spellcheck="false"></textarea>
-            </label>
-
-            <div class="projects-header">
-              <div>
-                <h2>Project history</h2>
-                <p>Durations align automatically with total years of experience.</p>
+          <form id="resumeForm" novalidate>
+            <section class="form-section">
+              <div class="section-heading">
+                <h3>Role Details</h3>
+                <span></span>
               </div>
-              <button type="button" id="addProjectBtn">Add project</button>
-            </div>
-            <div id="projects"></div>
+              <div class="field-grid three">
+                <label>
+                  <span>Candidate name</span>
+                  <input name="candidateName" placeholder="Example: Namratha" />
+                </label>
+                <label>
+                  <span>Target job title</span>
+                  <input name="jobTitle" placeholder="Example: Sitecore Developer" required />
+                </label>
+                <label>
+                  <span>Years of experience</span>
+                  <input name="years" type="number" min="0" max="35" step="1" placeholder="Example: 8" required />
+                </label>
+              </div>
+
+              <label>
+                <span>Target job description</span>
+                <textarea name="jobDescription" rows="7" placeholder="Paste the target job description here, or upload a job description document below." required></textarea>
+              </label>
+
+              <div class="template-tools compact">
+                <label class="file-picker">
+                  <input id="jobDescriptionFile" type="file" accept=".txt,.md,.html,.docx,.pdf,.doc" />
+                  <span>Upload job description doc</span>
+                </label>
+              </div>
+            </section>
+
+            <section class="form-section">
+              <div class="section-heading">
+                <h3>Template</h3>
+                <span></span>
+              </div>
+              <div class="template-tools">
+                <label class="file-picker">
+                  <input id="templateFile" type="file" accept=".txt,.md,.html,.docx,.pdf,.doc" multiple />
+                  <span>Upload resume templates</span>
+                </label>
+                <button type="button" id="useSampleBtn">Sample template</button>
+              </div>
+              <p id="templateUploadValidation" class="upload-validation" aria-live="polite"></p>
+              <div id="templateList" class="template-list" aria-live="polite"></div>
+
+              <label>
+                <span>Resume template</span>
+                <textarea name="template" rows="10" spellcheck="false"></textarea>
+              </label>
+            </section>
+
+            <section class="form-section">
+              <div class="projects-header">
+                <div>
+                  <h3>Project History</h3>
+                  <p>Durations align automatically with total years of experience.</p>
+                </div>
+                <button type="button" id="addProjectBtn">Add project</button>
+              </div>
+              <div id="projects"></div>
+            </section>
 
             <button class="primary-action" type="submit">Generate resume</button>
           </form>
@@ -74,11 +106,11 @@
           <div class="output-toolbar">
             <div>
               <h2>Skilled Resume</h2>
-              <p id="statusText">Ready</p>
+              <p id="statusText" class="status-message"></p>
             </div>
             <div class="toolbar-actions">
-              <button id="copyBtn" type="button" title="Copy resume">Copy</button>
-              <button id="downloadBtn" type="button" title="Download resume">Download</button>
+              <button id="copyBtn" type="button" title="Copy resume" disabled>Copy</button>
+              <button id="downloadBtn" type="button" title="Download resume" disabled>Download</button>
             </div>
           </div>
           <pre id="resumeOutput" class="resume-output" aria-live="polite"></pre>
