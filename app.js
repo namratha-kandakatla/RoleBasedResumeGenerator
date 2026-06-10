@@ -15,6 +15,9 @@ let generatedParagraphId = 0x10000000;
 let storedTemplates = [];
 let activeTemplateId = null;
 let resumeReady = false;
+const DUPLICATE_BULLET_THRESHOLD = 0.3;
+const DUPLICATE_REWRITE_PASSES = 4;
+const FINAL_GENERATION_FAILURE_MESSAGE = "Resume generation needs more specific project details. Please add more client/domain/project information.";
 
 const sampleTemplate = `Namratha K
 [Insert Job Title Here]+1 (913)-253-6619 | namratha.k0322@gmail.com
@@ -127,12 +130,161 @@ function collectProjects() {
   }).filter((project) => project.clientName);
 }
 
+function createResumeContext(data) {
+  const projects = collectProjects().map((project, index) => ({
+    clientName: project.clientName,
+    designation: project.designation,
+    domain: project.domain,
+    duration: project.duration,
+    cloud: project.cloud,
+    sequence: index
+  }));
+  const targetJobTitle = cleanRoleTitle(data.jobTitle);
+  const yearsOfExperience = Number(data.years);
+  return {
+    candidateName: String(data.candidateName || "").trim(),
+    jobTitle: targetJobTitle,
+    years: String(data.years || "").trim(),
+    targetJobTitle,
+    yearsOfExperience,
+    jobDescription: String(data.jobDescription || "").trim(),
+    clients: projects.map((project) => project.clientName),
+    domains: projects.map((project) => project.domain),
+    durations: projects.map((project) => project.duration),
+    projects,
+    skills: [],
+    template: String(data.template || "")
+  };
+}
+
 function normalize(text) {
   return String(text || "").toLowerCase();
 }
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
+}
+
+function skillMatchesFromText(text) {
+  const source = normalize(text);
+  return Object.entries(skillBank).reduce((matches, [category, skills]) => {
+    const found = unique(skills.filter((skill) => source.includes(skill.toLowerCase())));
+    if (found.length) matches[category] = found;
+    return matches;
+  }, {});
+}
+
+function profileTextFromContext(resumeContext, projects = resumeContext.projects || []) {
+  return [
+    resumeContext.template,
+    resumeContext.targetJobTitle,
+    ...projects.flatMap((project) => [
+      project.clientName,
+      project.designation,
+      project.domain,
+      project.cloud
+    ])
+  ].join(" ");
+}
+
+function roleTransferableTerms(roleTrack) {
+  const map = {
+    businessAnalysis: ["Requirements Analysis", "User Stories", "Acceptance Criteria", "UAT", "Process Mapping", "Gap Analysis", "Stakeholder Management", "Jira", "Confluence", "Reporting", "Data Validation"],
+    workday: ["Stakeholder Management", "Reporting", "Data Validation", "Release Management", "Process Mapping", "Governance"],
+    devops: ["Monitoring", "Incident Management", "Release Management", "SLA", "Governance", "Change Management"],
+    product: ["Backlog Management", "Sprint Planning", "Prioritization", "Release Planning", "KPI", "Stakeholder Management"],
+    quality: ["UAT", "Test Strategy", "Defect Triage", "Release Validation", "Quality Improvement", "Automation Coverage"],
+    data: ["Data Analysis", "Reporting", "Dashboards", "Data Mapping", "Data Validation", "KPI"],
+    delivery: ["Release Management", "Change Management", "Risk Management", "Governance", "SLA", "Stakeholder Management"],
+    technical: ["Release Management", "Production Support", "Performance Improvement", "Quality Improvement", "Data Validation"]
+  };
+  return map[roleTrack] || map.technical;
+}
+
+function analyzeResumeTarget(jobTitle, jobDescription, years) {
+  const roleTrack = inferRoleTrack(jobTitle);
+  const jobMap = analyzeJob(jobDescription);
+  const groups = detectJobKeywordGroups(jobDescription);
+  const allSkills = unique([
+    ...groups.requiredSkills,
+    ...groups.preferredSkills,
+    ...groups.technicalKeywords,
+    ...groups.toolsPlatformsMethodologies
+  ]);
+  return {
+    roleCategory: roleTrack,
+    seniorityLevel: careerLevel(Number(years), 0, 1),
+    coreResponsibilities: unique([
+      ...groups.businessKeywords,
+      ...groups.softSkills,
+      ...roleArtifacts(roleTrack).slice(0, 4)
+    ]),
+    primarySkills: allSkills.slice(0, 10),
+    secondarySkills: unique([
+      ...groups.preferredSkills,
+      ...groups.toolsPlatformsMethodologies,
+      ...groups.softSkills
+    ]).slice(0, 10),
+    domainKnowledge: groups.domainKeywords,
+    jobMap
+  };
+}
+
+function classifySkillFit(requirements, candidateSkills, profileText, roleTrack) {
+  const profile = normalize(profileText);
+  const candidateSkillSet = unique(candidateSkills);
+  const transferableTerms = roleTransferableTerms(roleTrack);
+  const existing = [];
+  const transferable = [];
+  const missing = [];
+
+  unique(requirements).forEach((skill) => {
+    const normalized = normalize(skill);
+    const category = skillCategory(skill);
+    const hasExactSkill = candidateSkillSet.some((candidateSkill) => normalize(candidateSkill) === normalized);
+    const hasProfileEvidence = normalized && profile.includes(normalized);
+    const hasSameCategory = category && candidateSkillSet.some((candidateSkill) => skillCategory(candidateSkill) === category);
+    const hasRoleTransfer = transferableTerms.some((term) => normalize(term) === normalized);
+    const isBusinessConcept = /stakeholder|business|customer|quality|performance|release|communication|collaboration|leadership|ownership|problem|agile|healthcare|telecom|logistics|finance|banking|content management/i.test(skill);
+
+    if (hasExactSkill || hasProfileEvidence) {
+      existing.push(skill);
+    } else if (hasSameCategory || hasRoleTransfer || isBusinessConcept) {
+      transferable.push(skill);
+    } else {
+      missing.push(skill);
+    }
+  });
+
+  return {
+    existing,
+    transferable,
+    missing,
+    allowedTerms: unique([...existing, ...transferable]),
+    resumeSafeTerms: unique([
+      ...existing,
+      ...transferable.filter((skill) => !skillCategory(skill))
+    ])
+  };
+}
+
+function transferablesByCategory(classification) {
+  const grouped = {};
+  (classification.transferable || []).forEach((skill) => {
+    if (skillCategory(skill)) return;
+    const category = skillCategory(skill) || "Transferable Role Capabilities";
+    if (!grouped[category]) grouped[category] = [];
+    grouped[category].push(skill);
+  });
+  return Object.fromEntries(Object.entries(grouped).map(([category, skills]) => [category, unique(skills)]));
+}
+
+function mergeSkillGroups(primary, secondary) {
+  const merged = { ...primary };
+  Object.entries(secondary || {}).forEach(([category, skills]) => {
+    merged[category] = unique([...(merged[category] || []), ...skills]);
+  });
+  return Object.fromEntries(Object.entries(merged).filter(([, skills]) => skills.length));
 }
 
 function xmlToText(xml) {
@@ -479,6 +631,20 @@ function replaceSequentialParagraphs(xml, predicate, lines) {
   });
 }
 
+function replaceFirstContentParagraph(xml, value) {
+  if (!value || normalize(xmlToText(xml)).includes(normalize(value))) return xml;
+  let replaced = false;
+  return xml.replace(/<w:p[\s\S]*?<\/w:p>/g, (paragraph) => {
+    if (replaced) return paragraph;
+    const text = paragraphPlainText(paragraph).trim();
+    if (!text || /^(summary|professional summary|it skills|technical skills|skills|work experience|professional experience|experience|client|role|responsibilities)\s*:?$/i.test(text)) {
+      return paragraph;
+    }
+    replaced = true;
+    return paragraphWithText(paragraph, value);
+  });
+}
+
 function replaceTextAnywhere(xml, marker, value) {
   return xml.replaceAll(escapeXml(marker), escapeXml(value));
 }
@@ -521,7 +687,34 @@ async function buildDocxFromUploadedTemplate(artifacts) {
   const encoder = new TextEncoder();
   let xml = decoder.decode(documentEntry.data);
   const beforePlaceholderCount = paragraphPlaceholderCount(xml, "[Insert Bullet points Here]");
+  [
+    "[Insert Candidate Name Here]",
+    "[Candidate Name Here]",
+    "Candidate Name Here",
+    "{{candidateName}}",
+    "{{candidate name}}",
+    "[[candidate name]]"
+  ].forEach((marker) => {
+    xml = replaceTextAnywhere(xml, marker, artifacts.candidateName || "");
+  });
+  xml = replaceFirstContentParagraph(xml, artifacts.candidateName || "");
   xml = replaceTextAnywhere(xml, "[Insert Job Title Here]", artifacts.jobTitle);
+  xml = replaceTextAnywhere(xml, "[Target Job Title Here]", artifacts.jobTitle);
+  xml = replaceSequentialParagraphs(
+    xml,
+    (text) => text.startsWith("Client:"),
+    artifacts.projectBlocks.map((project) => `Client: ${project.clientName}                             ${project.duration}`)
+  );
+  xml = replaceAllParagraphsContaining(
+    xml,
+    "[Client Here]",
+    artifacts.projectBlocks.map((project) => [`Client: ${project.clientName}                             ${project.duration}`])
+  );
+  xml = replaceAllParagraphsContaining(
+    xml,
+    "[Role Here]",
+    artifacts.projectBlocks.map((project) => [`Role: ${project.role}`])
+  );
   xml = replaceSequentialParagraphs(
     xml,
     (text) => text.startsWith("Role:"),
@@ -543,26 +736,42 @@ async function buildDocxFromUploadedTemplate(artifacts) {
   });
 }
 
-function detectSkills(jobDescription, template, projects) {
-  const haystack = normalize([
-    jobDescription,
-    ...projects.flatMap((project) => [project.domain, project.cloud])
-  ].join(" "));
-  const grouped = {};
-
-  for (const [category, skills] of Object.entries(skillBank)) {
-    grouped[category] = unique(skills.filter((skill) => haystack.includes(skill.toLowerCase())));
-  }
+function detectSkills(resumeContext, projects, jobKeywordGroups) {
+  const profileText = profileTextFromContext(resumeContext, projects);
+  const grouped = skillMatchesFromText(profileText);
 
   const addSkills = (category, skills) => {
     grouped[category] = unique([...(grouped[category] || []), ...skills]);
   };
 
-  if (/cloud|aws|azure|gcp/.test(haystack) || projects.some((project) => project.cloud)) {
+  if (projects.some((project) => project.cloud)) {
     addSkills("Cloud Platforms", unique(projects.map((project) => project.cloud)).filter(Boolean));
   }
 
-  return Object.fromEntries(Object.entries(grouped).filter(([, skills]) => skills.length));
+  const requirements = unique([
+    ...jobKeywordGroups.requiredSkills,
+    ...jobKeywordGroups.preferredSkills,
+    ...jobKeywordGroups.technicalKeywords,
+    ...jobKeywordGroups.toolsPlatformsMethodologies,
+    ...jobKeywordGroups.businessKeywords,
+    ...jobKeywordGroups.softSkills,
+    ...jobKeywordGroups.domainKeywords
+  ]);
+  const existingSkills = flattenGroupedSkills(grouped);
+  const classification = classifySkillFit(
+    requirements,
+    existingSkills,
+    profileText,
+    inferRoleTrack(resumeContext.targetJobTitle)
+  );
+  const transferableGroups = transferablesByCategory(classification);
+  const merged = mergeSkillGroups(grouped, transferableGroups);
+
+  return {
+    groupedSkills: merged,
+    profileText,
+    classification
+  };
 }
 
 function analyzeJob(jobDescription) {
@@ -585,12 +794,23 @@ function careerLevel(years, projectIndex, totalProjects) {
   return "early";
 }
 
-function suggestedDesignation(years, index) {
-  const roleFamily = cleanRoleTitle(form.elements.jobTitle.value);
+function suggestedDesignation(years, index, targetJobTitle = form.elements.jobTitle.value) {
+  const roleFamily = cleanRoleTitle(targetJobTitle);
   if (index === 0 && years >= 8) return `Lead ${roleFamily}`;
   if (index <= 1 && years >= 5) return `Senior ${roleFamily}`;
   if (index <= 2 && years >= 2) return roleFamily;
   return `Junior ${roleFamily}`;
+}
+
+function isSeedOrGenericDesignation(value) {
+  return !String(value || "").trim() ||
+    /^(associate software engineer|software engineer|sitecore developer|senior sitecore developer)$/i.test(String(value).trim());
+}
+
+function resolveProjectRole(project, years, index, targetJobTitle) {
+  return isSeedOrGenericDesignation(project.designation)
+    ? suggestedDesignation(years, index, targetJobTitle)
+    : project.designation;
 }
 
 function cleanRoleTitle(value) {
@@ -643,32 +863,38 @@ function alignProjectTimeline() {
     const start = addMonths(end, -months + 1);
     const designationInput = card.querySelector('[name="designation"]');
     card.dataset.duration = `${formatMonth(start)} - ${index === 0 ? "Present" : formatMonth(end)}`;
-    if (!designationInput.value || /associate|software engineer|sitecore developer|senior|lead|developer/i.test(designationInput.value)) {
+    if (isSeedOrGenericDesignation(designationInput.value)) {
       designationInput.value = suggestedDesignation(years, index);
     }
     end = addMonths(start, -1);
   });
 }
 
-function buildSummary({ jobTitle, years, projects, groupedSkills, jobDescription, correctionTerms = [] }) {
+function buildSummary({ jobTitle, years, projects, groupedSkills, jobDescription, skillClassification = {}, correctionTerms = [] }) {
   const domains = unique(projects.map((project) => project.domain)).slice(0, 3).join(", ");
   const skills = flattenGroupedSkills(groupedSkills).slice(0, 12);
   const role = cleanRoleTitle(jobTitle);
   const roleTrack = inferRoleTrack(role);
-  const value = roleValuePhrase(roleTrack);
-  const artifacts = roleArtifacts(roleTrack);
-  const keywordBridge = unique([summaryKeywordBridge(jobDescription), ...correctionTerms].flatMap((item) => String(item || "").split(",").map((part) => part.trim()))).filter(Boolean).slice(0, 12).join(", ");
+  const value = roleValuePhraseForContext(roleTrack, skillClassification);
+  const artifacts = authenticRoleArtifacts(roleTrack, skillClassification);
+  const allowedTerms = skillClassification.resumeSafeTerms || skillClassification.allowedTerms || [];
+  const keywordBridge = unique([summaryKeywordBridge(jobDescription), ...correctionTerms]
+    .flatMap((item) => String(item || "").split(",").map((part) => part.trim())))
+    .filter((item) => !allowedTerms.length || allowedTerms.some((term) => normalize(term) === normalize(item)) || !skillCategory(item))
+    .filter(Boolean)
+    .slice(0, 12)
+    .join(", ");
 
   return [
     `- ${role} with ${years}+ years of experience delivering ${value} across ${domains || "business-critical domains"}.`,
     `- Applies ${skills.slice(0, 8).join(", ") || "role-aligned practices"} to translate target-role requirements into practical outcomes, clear deliverables, and measurable execution discipline.`,
-    `- Uses ${artifacts.slice(0, 5).join(", ")}${artifacts.length > 5 ? `, and ${artifacts.slice(5).join(", ")}` : ""} to keep the resume aligned to the ${role} ecosystem rather than unrelated role content.`,
+    `- Uses ${artifacts.slice(0, 5).join(", ")}${artifacts.length > 5 ? `, and ${artifacts.slice(5).join(", ")}` : ""} to show role alignment through existing and transferable experience rather than unsupported keyword insertion.`,
     `- Strengthens ${keywordBridge || "business alignment, communication, collaboration, and release readiness"} through stakeholder collaboration, structured analysis, delivery ownership, quality validation, and continuous improvement.`
   ].join("\n");
 }
 
-function summaryLines({ jobTitle, years, projects, groupedSkills, jobDescription, correctionTerms = [] }) {
-  return buildSummary({ jobTitle, years, projects, groupedSkills, jobDescription, correctionTerms }).split("\n");
+function summaryLines({ jobTitle, years, projects, groupedSkills, jobDescription, skillClassification = {}, correctionTerms = [] }) {
+  return buildSummary({ jobTitle, years, projects, groupedSkills, jobDescription, skillClassification, correctionTerms }).split("\n");
 }
 
 function buildSkillMatrix(groupedSkills, jobDescription = "") {
@@ -726,6 +952,63 @@ function roleValuePhrase(roleTrack) {
     delivery: "delivery planning, team coordination, governance, risk management, and release execution",
     technical: "solution delivery, system enhancement, integration readiness, production support, and cross-functional execution"
   }[roleTrack] || "target-role delivery";
+}
+
+function roleValuePhraseForContext(roleTrack, classification = {}) {
+  const existingText = normalize([...(classification.existing || []), ...(classification.transferable || [])].join(" "));
+  if (roleTrack === "workday" && !/workday|hcm|tenant|payroll|calculated fields|eib/.test(existingText)) {
+    return "business process analysis, reporting validation, stakeholder enablement, release readiness, and operational workflow improvement";
+  }
+  if (roleTrack === "devops" && !/ci\/cd|docker|kubernetes|terraform|jenkins|azure devops|github actions|monitoring/.test(existingText)) {
+    return "release coordination, production support, monitoring awareness, incident triage, and operational reliability improvement";
+  }
+  return roleValuePhrase(roleTrack);
+}
+
+function authenticRoleArtifacts(roleTrack, classification = {}) {
+  const allowed = unique([...(classification.existing || []), ...(classification.transferable || [])]);
+  const allowedText = normalize(allowed.join(" "));
+  const hasWorkdayEvidence = /workday|hcm|tenant|payroll|calculated fields|eib|security groups/.test(allowedText);
+  const hasDevopsEvidence = /ci\/cd|docker|kubernetes|terraform|jenkins|azure devops|github actions|monitoring|incident management/.test(allowedText);
+  const fallback = {
+    businessAnalysis: ["Requirements Analysis", "User Stories", "Acceptance Criteria", "UAT", "Process Flows", "Data Validation", "Reporting"],
+    workday: ["Business Process Configuration", "Custom Reports", "Tenant Testing", "Data Validation", "Reporting", "Release Readiness"],
+    devops: ["CI/CD", "Monitoring", "Incident Resolution", "Reliability Metrics", "Runbooks", "Release Gates"],
+    product: ["Backlog", "Sprint Goals", "Acceptance Criteria", "Release Notes", "KPI Reviews"],
+    quality: ["Test Strategy", "Defect Triage", "UAT Evidence", "Release Validation", "Quality Metrics"],
+    data: ["Data Mapping", "Dashboards", "Reporting", "Data Validation", "KPI Definitions"],
+    delivery: ["Delivery Plan", "Risk Register", "Release Plan", "Status Reporting", "SLA Dashboard"],
+    technical: ["APIs", "Database Optimization", "Performance Tuning", "Integration Contracts", "Code Reviews", "Release Validation"]
+  };
+  const direct = roleArtifacts(roleTrack).filter((artifact) => allowedText.includes(normalize(artifact)));
+  const safeGeneric = ["Stakeholder Management", "Process Improvement", "Data Validation", "Reporting", "Release Readiness", "Release Validation", "Quality Metrics", "Status Reporting", "Risk Register"];
+  if (roleTrack === "workday" && !hasWorkdayEvidence) {
+    return ["Stakeholder Management", "Process Mapping", "Data Validation", "Reporting", "Release Readiness"];
+  }
+  if (roleTrack === "devops" && !hasDevopsEvidence) {
+    return ["Release Management", "Incident Management", "Monitoring", "SLA Dashboard", "Governance"];
+  }
+  const transferable = (fallback[roleTrack] || fallback.technical).filter((artifact) => {
+    const category = skillCategory(artifact);
+    return allowedText.includes(normalize(artifact)) ||
+      safeGeneric.includes(artifact) ||
+      (category && allowed.some((term) => skillCategory(term) === category));
+  });
+  const result = unique([...direct, ...transferable]).slice(0, 8);
+  return result.length ? result : ["Stakeholder Management", "Process Improvement", "Data Validation", "Reporting", "Release Readiness"];
+}
+
+function authenticRoleActions(roleTrack, maturity, classification = {}) {
+  const allowedText = normalize([...(classification.existing || []), ...(classification.transferable || [])].join(" "));
+  const hasWorkdayEvidence = /workday|hcm|tenant|payroll|calculated fields|eib|security groups/.test(allowedText);
+  const hasDevopsEvidence = /ci\/cd|docker|kubernetes|terraform|jenkins|azure devops|github actions|monitoring|incident management/.test(allowedText);
+  if (roleTrack === "workday" && !hasWorkdayEvidence) {
+    return roleActions("businessAnalysis", maturity);
+  }
+  if (roleTrack === "devops" && !hasDevopsEvidence) {
+    return roleActions("delivery", maturity);
+  }
+  return roleActions(roleTrack, maturity);
 }
 
 function domainTerms(domain) {
@@ -1100,9 +1383,18 @@ function skillCategory(skill) {
   return Object.keys(skillBank).find((category) => skillBank[category].includes(skill)) || "";
 }
 
-function classifyRequirement(keyword, candidateText, candidateSkills) {
+function classifyRequirement(keyword, candidateText, candidateSkills, classification = {}) {
   const normalized = normalize(keyword);
   if (!normalized) return "Missing";
+  if ((classification.existing || []).some((skill) => normalize(skill) === normalized)) {
+    return "Strong Match";
+  }
+  if ((classification.transferable || []).some((skill) => normalize(skill) === normalized)) {
+    return "Partial Match";
+  }
+  if ((classification.missing || []).some((skill) => normalize(skill) === normalized)) {
+    return "Missing";
+  }
   if (candidateText.includes(normalized) || candidateSkills.some((skill) => normalize(skill) === normalized)) {
     return "Strong Match";
   }
@@ -1127,7 +1419,7 @@ function requirementRows(data, projects, groupedSkills, jobKeywordGroups) {
 
   return requirements.map((keyword) => ({
     keyword,
-    status: classifyRequirement(keyword, candidateText, candidateSkills)
+    status: classifyRequirement(keyword, candidateText, candidateSkills, data.skillClassification)
   }));
 }
 
@@ -1135,7 +1427,7 @@ function atsMatchScore(rows) {
   if (!rows.length) return 0;
   const score = rows.reduce((sum, row) => {
     if (row.status === "Strong Match") return sum + 1;
-    if (row.status === "Partial Match") return sum + 0.5;
+    if (row.status === "Partial Match") return sum + 0.85;
     return sum;
   }, 0);
   return Math.round((score / rows.length) * 100);
@@ -1143,6 +1435,14 @@ function atsMatchScore(rows) {
 
 function rowsByStatus(rows, status) {
   return rows.filter((row) => row.status === status).map((row) => row.keyword);
+}
+
+function safeMatchedTerms(rows, resumeContext) {
+  const safe = resumeContext.skillClassification?.resumeSafeTerms || [];
+  return rows
+    .filter((row) => row.status !== "Missing")
+    .map((row) => row.keyword)
+    .filter((term) => !skillCategory(term) || safe.some((item) => normalize(item) === normalize(term)));
 }
 
 function contentContains(text, keyword) {
@@ -1156,8 +1456,8 @@ function scoreCoverage(items, text) {
   return Math.round((hits / terms.length) * 100);
 }
 
-function roleTerminology(roleTrack) {
-  return roleArtifacts(roleTrack);
+function roleTerminology(roleTrack, classification = {}) {
+  return authenticRoleArtifacts(roleTrack, classification);
 }
 
 function contaminationTerms(roleTrack) {
@@ -1174,16 +1474,24 @@ function contaminationTerms(roleTrack) {
   return forbidden[roleTrack] || [];
 }
 
-function contaminationPenalty(roleTrack, resume, jobDescription) {
+function contaminationPenalty(roleTrack, resume, jobDescription, candidateProfileText = "") {
   const jd = normalize(jobDescription);
+  const profile = normalize(candidateProfileText);
   return contaminationTerms(roleTrack)
-    .filter((term) => contentContains(resume, term) && !jd.includes(term.toLowerCase()))
+    .filter((term) => contentContains(resume, term) && !jd.includes(term.toLowerCase()) && !profile.includes(term.toLowerCase()))
     .length * 8;
 }
 
 function bulletSimilarity(left, right) {
+  const commonResumeTokens = [
+    "with", "from", "that", "into", "using", "project", "release", "validation",
+    "stakeholder", "stakeholders", "process", "workflow", "workflows", "delivery",
+    "readiness", "evidence", "requirements", "business", "technical", "improved",
+    "improving", "helping", "teams", "review", "reviews", "decision", "decisions",
+    "support", "supported", "needs", "across", "through", "before", "after"
+  ];
   const tokens = (text) => unique(normalize(text).match(/[a-z0-9]+/g) || [])
-    .filter((token) => token.length > 3 && !["with", "from", "that", "into", "using", "project"].includes(token));
+    .filter((token) => token.length > 3 && !commonResumeTokens.includes(token));
   const a = tokens(left);
   const b = tokens(right);
   if (!a.length || !b.length) return 0;
@@ -1200,8 +1508,234 @@ function duplicateScore(projectBlocks) {
       maxSimilarity = Math.max(maxSimilarity, bulletSimilarity(bullets[left], bullets[right]));
     }
   }
-  if (maxSimilarity <= 0.3) return 100;
-  return Math.max(70, Math.round(100 - ((maxSimilarity - 0.3) * 100)));
+  if (maxSimilarity <= DUPLICATE_BULLET_THRESHOLD) return 100;
+  return Math.max(70, Math.round(100 - ((maxSimilarity - DUPLICATE_BULLET_THRESHOLD) * 100)));
+}
+
+function findDuplicateBulletPairs(projectBlocks, threshold = DUPLICATE_BULLET_THRESHOLD) {
+  const references = projectBlocks.flatMap((project, projectIndex) => (
+    project.bullets.map((bullet, bulletIndex) => ({
+      bullet,
+      projectIndex,
+      bulletIndex
+    }))
+  ));
+  const pairs = [];
+  for (let leftIndex = 0; leftIndex < references.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < references.length; rightIndex += 1) {
+      const similarity = bulletSimilarity(references[leftIndex].bullet, references[rightIndex].bullet);
+      if (similarity > threshold) {
+        pairs.push({
+          left: references[leftIndex],
+          right: references[rightIndex],
+          similarity
+        });
+      }
+    }
+  }
+  return pairs.sort((left, right) => right.similarity - left.similarity);
+}
+
+function buildProjectText(project) {
+  return `Client: ${project.clientName}                             ${project.duration}
+Role: ${project.role}
+Responsibilities:
+${project.bullets.join("\n")}`;
+}
+
+function projectSpecificBullet(project, resumeContext, groupedSkills, bulletIndex, attempt) {
+  const roleTrack = inferRoleTrack(resumeContext.targetJobTitle);
+  const projectIndex = Number(project.sequence || 0);
+  const maturity = careerLevel(Number(resumeContext.yearsOfExperience), projectIndex, resumeContext.projects.length);
+  const actions = maturityActionSet(maturity);
+  const artifacts = rotatedItems(authenticRoleArtifacts(roleTrack, resumeContext.skillClassification), projectIndex + bulletIndex + attempt, 4);
+  const metrics = rotatedItems(metricBank(roleTrack), (projectIndex * 2) + bulletIndex + attempt, 2);
+  const terms = domainTerms(project.domain);
+  const profile = domainProfile(project.domain);
+  const skills = rotatedItems(flattenGroupedSkills(groupedSkills), projectIndex + bulletIndex + attempt, 3);
+  const skillPhrase = skills.length ? skills.join(", ") : "target-role practices";
+  const role = project.role || resolveProjectRole(project, resumeContext.yearsOfExperience, projectIndex, resumeContext.targetJobTitle);
+  const domain = project.domain || "business operations";
+  const client = project.clientName;
+  const artifact = artifacts[0] || "validation evidence";
+  const improvementVariants = [
+    `Reviewed ${terms[3]} defects at ${client}, separated data quality issues from workflow gaps, and converted the findings into ${artifact} updates that ${metrics[0]}.`,
+    `Used ${profile.evidence} to isolate where ${terms[4]} handoffs were slowing the team, then adjusted review steps so ${client} could ${metrics[0]}.`,
+    `Compared support notes, QA feedback, and ${terms[2]} trends for ${client}, turning recurring issues into clearer release actions that ${metrics[0]}.`,
+    `Prioritized ${terms[0]} fixes for ${client} by ranking operational risk, user impact, and validation effort, which ${metrics[0]}.`
+  ];
+  const readinessVariants = [
+    `Captured release notes, decision history, and ${terms[4]} assumptions for ${client} so support teams could trace why changes were accepted after handoff.`,
+    `Packaged ${artifact}, risk notes, and validation examples for ${client}, giving future project teams a practical starting point for ${terms[3]} changes.`,
+    `Documented open questions, known constraints, and ${terms[1]} acceptance evidence for ${client} to reduce repeat analysis in later sprints.`,
+    `Summarized project decisions for ${client} in plain language, connecting ${terms[2]} tradeoffs to support, QA, and release follow-up work.`
+  ];
+  const domainDecisionVariants = [
+    `Mapped ${terms[2]} exceptions for ${client} against ${artifacts[1]} and ${artifacts[2]}, giving ${domain} users a clearer view of ${terms[3]} impact before scope was accepted.`,
+    `Translated ${domain} operating details at ${client} into sprint-ready guidance by showing how ${terms[2]} issues changed ${terms[3]} controls.`,
+    `Validated ${terms[2]} scenarios for ${client} with ${artifacts[1]}, then used the findings to explain ${terms[3]} risk to delivery and QA teams.`,
+    `Reviewed ${domain} workflows for ${client} and documented where ${terms[2]} exceptions affected downstream ${terms[3]} decisions.`
+  ];
+  const variants = [
+    `Aligned ${client} stakeholders around ${role} priorities by converting ${profile.evidence} into practical decisions for ${profile.workflow}, helping ${metrics[0]}.`,
+    `Refined the ${terms[0]} to ${terms[1]} workflow at ${client} with clearer checkpoints, ${artifacts[0]}, and validation notes, helping ${metrics[0]}.`,
+    domainDecisionVariants[projectIndex % domainDecisionVariants.length],
+    `Executed ${actions[0].toLowerCase()} with ${skillPhrase}${project.cloud ? ` on ${project.cloud}` : ""}, tying project evidence to release readiness and helping ${metrics[1]}.`,
+    improvementVariants[projectIndex % improvementVariants.length],
+    readinessVariants[projectIndex % readinessVariants.length]
+  ];
+  return `- ${variants[bulletIndex % variants.length]}`;
+}
+
+function maturityActionSet(level) {
+  const actions = {
+    early: ["Documented", "Validated", "Supported", "Mapped", "Coordinated", "Prepared"],
+    mid: ["Owned", "Implemented", "Streamlined", "Resolved", "Improved", "Coordinated"],
+    senior: ["Led", "Optimized", "Guided", "Improved", "Resolved", "Standardized"],
+    lead: ["Led", "Established", "Prioritized", "Mentored", "Directed", "Strengthened"]
+  };
+  return actions[level] || actions.early;
+}
+
+function genericMetricSet(level) {
+  const metrics = {
+    early: ["improving validation accuracy by 18%", "reducing follow-up effort by 12 hours per month", "improving defect visibility by 22%"],
+    mid: ["reducing manual effort by 20 hours per month", "improving workflow turnaround by 25%", "cutting rework by 24%"],
+    senior: ["improving release readiness by 28%", "reducing delivery risk by 30%", "improving stakeholder decision speed by 32%"],
+    lead: ["improving operating consistency by 35%", "raising delivery predictability by 30%", "reducing repeated escalations by 27%"]
+  };
+  return metrics[level] || metrics.early;
+}
+
+function jdResponsibilityThemes(resumeContext, jobKeywordGroups) {
+  const roleTerms = resumeContext.targetAnalysis?.coreResponsibilities || [];
+  const safeTerms = resumeContext.skillClassification?.resumeSafeTerms || [];
+  return unique([
+    ...roleTerms,
+    ...safeTerms,
+    ...(jobKeywordGroups.businessKeywords || []),
+    ...(jobKeywordGroups.softSkills || []),
+    ...(jobKeywordGroups.domainKeywords || [])
+  ])
+    .filter((term) => !skillCategory(term) || safeTerms.some((safe) => normalize(safe) === normalize(term)))
+    .slice(0, 16);
+}
+
+function jdRelevantBulletSet(project, level, groupedSkills, resumeContext, jobKeywordGroups) {
+  const actions = maturityActionSet(level);
+  const terms = domainTerms(project.domain);
+  const profile = domainProfile(project.domain);
+  const themes = jdResponsibilityThemes(resumeContext, jobKeywordGroups);
+  const skills = unique([
+    ...flattenGroupedSkills(groupedSkills),
+    ...themes.filter((term) => !skillCategory(term))
+  ]);
+  const artifacts = authenticRoleArtifacts(inferRoleTrack(resumeContext.targetJobTitle), resumeContext.skillClassification);
+  const metrics = genericMetricSet(level);
+  const index = Number(project.sequence || 0);
+  const pick = (items, offset, fallback) => items.length ? items[(index + offset) % items.length] : fallback;
+  const client = project.clientName;
+  const domain = project.domain || "business operations";
+  const responsibility = pick(themes, 0, "role-aligned delivery");
+  const secondary = pick(themes, 1, "stakeholder alignment");
+  const skill = pick(skills, 2, "structured analysis");
+  const artifact = pick(artifacts, 3, "validation evidence");
+
+  return [
+    `- ${actions[0]} ${responsibility} needs for ${client} by using ${artifact} and ${skill} across ${profile.workflow}, ${metrics[0]}.`,
+    `- ${actions[1]} ${terms[0]} and ${terms[1]} scenarios through ${secondary} checkpoints, giving ${domain} stakeholders clearer release evidence and ${metrics[1]}.`,
+    `- ${actions[2]} handoffs between ${profile.stakeholders} with process notes, validation findings, and decision records so project scope stayed connected to the target ${resumeContext.targetJobTitle} expectations.`,
+    `- ${actions[3]} recurring gaps in ${terms[2]} workflows by tracing root causes through ${profile.evidence}, helping teams reduce avoidable rework while keeping delivery realistic.`,
+    `- ${actions[4]} project execution with ${skill}, ${artifact}, and domain-specific review routines, improving visibility into ${terms[3]} risks before release decisions were made.`,
+    `- ${actions[5]} reusable documentation, open-risk notes, and outcome evidence for ${client}, helping later teams understand ${terms[4]} decisions without repeating earlier analysis.`
+  ];
+}
+
+function buildJdRelevantProjectBlocks(projects, years, groupedSkills, resumeContext, jobKeywordGroups) {
+  return projects.map((project, index) => {
+    const level = careerLevel(Number(years), index, projects.length);
+    const role = resolveProjectRole(project, Number(years), index, resumeContext.targetJobTitle);
+    const bullets = jdRelevantBulletSet(project, level, groupedSkills, resumeContext, jobKeywordGroups);
+    const block = {
+      ...project,
+      role,
+      bullets
+    };
+    return {
+      ...block,
+      text: buildProjectText(block)
+    };
+  });
+}
+
+function optimizeDraftForAtsRelevance(draft, resumeContext, projects, groupedSkills, jobKeywordGroups, attempt = 0) {
+  const initialBlocks = buildJdRelevantProjectBlocks(projects, resumeContext.years, groupedSkills, resumeContext, jobKeywordGroups);
+  const duplicateRepair = rewriteDuplicateProjectBullets(initialBlocks, resumeContext, groupedSkills, attempt);
+  const projectBlocks = duplicateRepair.projectBlocks;
+  const optimized = rebuildDraftWithProjectBlocks(draft, resumeContext, projectBlocks);
+  const rewrittenCount = initialBlocks.reduce((count, project, index) => (
+    count + project.bullets.filter((bullet, bulletIndex) => bullet !== (draft.projectBlocks[index]?.bullets[bulletIndex] || "")).length
+  ), 0) + duplicateRepair.rewrites;
+  return {
+    draft: optimized,
+    removedIrrelevantContent: rewrittenCount ? ["Generic or weak project bullets replaced with JD-supported project bullets"] : [],
+    rewrites: rewrittenCount
+  };
+}
+
+function rewriteDuplicateProjectBullets(projectBlocks, resumeContext, groupedSkills, attempt = 0) {
+  let blocks = projectBlocks.map((project) => ({
+    ...project,
+    bullets: [...project.bullets]
+  }));
+  let rewrites = 0;
+
+  for (let pass = 0; pass < DUPLICATE_REWRITE_PASSES; pass += 1) {
+    const duplicatePairs = findDuplicateBulletPairs(blocks);
+    if (!duplicatePairs.length) break;
+    const rewrittenThisPass = new Set();
+    duplicatePairs.forEach(({ right }) => {
+      const key = `${right.projectIndex}:${right.bulletIndex}`;
+      if (rewrittenThisPass.has(key) || !blocks[right.projectIndex]) return;
+      blocks[right.projectIndex].bullets[right.bulletIndex] = projectSpecificBullet(
+        blocks[right.projectIndex],
+        resumeContext,
+        groupedSkills,
+        right.bulletIndex,
+        attempt + pass + rewrites
+      );
+      rewrittenThisPass.add(key);
+      rewrites += 1;
+    });
+    blocks = blocks.map((project) => ({
+      ...project,
+      text: buildProjectText(project)
+    }));
+  }
+
+  return {
+    projectBlocks: blocks,
+    duplicatePairsRemaining: findDuplicateBulletPairs(blocks).length,
+    rewrites
+  };
+}
+
+function rebuildDraftWithProjectBlocks(draft, data, projectBlocks) {
+  const experience = projectBlocks.map((project) => project.text).join("\n\n");
+  const resume = populateTemplate(data.template, {
+    candidateName: data.candidateName,
+    jobTitle: data.jobTitle,
+    projectBlocks,
+    summary: draft.summary,
+    skills: draft.skills,
+    experience
+  });
+  return {
+    ...draft,
+    experience,
+    projectBlocks,
+    resume
+  };
 }
 
 function recruiterScore(projectBlocks, resume) {
@@ -1231,6 +1765,12 @@ function projectQualityScore(projectBlocks, resume) {
   return Math.round((sectionQuality * 0.85) + (structure * 0.15));
 }
 
+function unsupportedClaimKeywords(resumeContext, resume) {
+  return unique(resumeContext.skillClassification?.missing || [])
+    .filter((skill) => skillCategory(skill))
+    .filter((skill) => contentContains(resume, skill));
+}
+
 function progressionScore(projectBlocks) {
   const roles = projectBlocks.map((project) => normalize(project.role));
   if (!roles.length) return 100;
@@ -1241,25 +1781,139 @@ function progressionScore(projectBlocks) {
   return latestStrong && earliestJunior ? 100 : 90;
 }
 
+function responsibilityAlignmentScore(resumeContext, resume, projectBlocks, jobKeywordGroups) {
+  const rows = requirementRows(resumeContext, projectBlocks, { "Profile Skills": resumeContext.skills || [] }, jobKeywordGroups);
+  const supportedTerms = unique([
+    ...safeMatchedTerms(rows, resumeContext),
+    ...(resumeContext.targetAnalysis?.coreResponsibilities || []),
+    ...(jobKeywordGroups.businessKeywords || []),
+    ...(jobKeywordGroups.softSkills || []),
+    ...(jobKeywordGroups.domainKeywords || [])
+  ]);
+  const coverage = scoreCoverage(supportedTerms, resume);
+  const bulletText = projectBlocks.flatMap((project) => project.bullets).join("\n");
+  const actionCoverage = /\b(Analyzed|Aligned|Built|Coordinated|Delivered|Documented|Established|Facilitated|Guided|Improved|Led|Mapped|Optimized|Owned|Resolved|Streamlined|Validated)\b/i.test(bulletText) ? 100 : 70;
+  return Math.round((coverage * 0.75) + (actionCoverage * 0.25));
+}
+
+function irrelevantContentScore(resumeContext, resume) {
+  const roleTrack = inferRoleTrack(resumeContext.targetJobTitle);
+  const contamination = contaminationPenalty(roleTrack, resume, resumeContext.jobDescription, resumeContext.candidateProfileText);
+  const unsupported = unsupportedClaimKeywords(resumeContext, resume).length * 12;
+  const generic = (resume.match(/responsible for|worked on|involved in|participated in/gi) || []).length * 5;
+  return Math.max(0, 100 - contamination - unsupported - generic);
+}
+
+function containsGenericResumePhrases(resume) {
+  return /Partnered with stakeholders to align|Converted root-cause findings|Created domain-specific coverage|Strengthened collaboration|Delivery grounded in business needs|responsible for|worked on|involved in|participated in/i.test(resume);
+}
+
+function finalResumeStatus(analysis, report) {
+  const blockers = blockingValidationErrors(report?.validationErrors || []);
+  if (blockers.includes("duplicate_bullets") || analysis.authenticity_score < 90) {
+    return "blocked_duplicate_or_generic_bullets";
+  }
+  if (analysis.unsupported_keywords.length) {
+    return "blocked_exaggeration_risk";
+  }
+  if (blockers.length || analysis.relevance_score < 60) {
+    return "needs_review_low_relevance";
+  }
+  if (analysis.missing_keywords.length && analysis.ats_score < 90) {
+    return "needs_review_missing_required_skills";
+  }
+  if (analysis.ats_score >= 90 && analysis.relevance_score >= 80) {
+    return "ready_ats_90_plus";
+  }
+  return "ready_best_possible";
+}
+
+function improvementSummary(previousAnalysis, nextAnalysis, rewrites = 0) {
+  const notes = [];
+  if (!previousAnalysis) {
+    notes.push("Analyzed JD relevance after initial resume generation.");
+  } else {
+    if (nextAnalysis.ats_score > previousAnalysis.ats_score) notes.push(`Improved ATS score from ${previousAnalysis.ats_score}% to ${nextAnalysis.ats_score}%.`);
+    if (nextAnalysis.relevance_score > previousAnalysis.relevance_score) notes.push(`Improved relevance score from ${previousAnalysis.relevance_score}% to ${nextAnalysis.relevance_score}%.`);
+  }
+  if (rewrites) notes.push(`Rewrote ${rewrites} project bullet${rewrites === 1 ? "" : "s"} with JD-supported context.`);
+  if (nextAnalysis.unsupported_keywords.length) {
+    notes.push("Flagged unsupported JD skills so they are not overstated.");
+  }
+  if (!notes.length) notes.push("Resume already met the relevance and authenticity checks.");
+  return notes.join(" ");
+}
+
+function atsRelevanceAnalysis({ resumeContext, resume, projectBlocks, groupedSkills, jobKeywordGroups, report, previousAnalysis = null, rewrites = 0, removedIrrelevantContent = [] }) {
+  const rows = requirementRows(resumeContext, projectBlocks, groupedSkills, jobKeywordGroups);
+  const matched = rowsByStatus(rows, "Strong Match");
+  const transferable = rowsByStatus(rows, "Partial Match");
+  const missing = rowsByStatus(rows, "Missing");
+  const unsupported = unsupportedClaimKeywords(resumeContext, resume);
+  const atsScore = report?.atsScore ?? qualityGateScore({
+    data: resumeContext,
+    resume,
+    projectBlocks,
+    groupedSkills,
+    jobKeywordGroups
+  });
+  const roleTrack = inferRoleTrack(resumeContext.targetJobTitle);
+  const roleRelevance = scoreCoverage([
+    resumeContext.targetJobTitle,
+    ...roleTerminology(roleTrack, resumeContext.skillClassification),
+    ...(resumeContext.targetAnalysis?.coreResponsibilities || [])
+  ], resume);
+  const skillAuthenticity = Math.max(0, 100 - (unsupported.length * 20));
+  const responsibilityAlignment = responsibilityAlignmentScore(resumeContext, resume, projectBlocks, jobKeywordGroups);
+  const chronology = progressionScore(projectBlocks);
+  const readability = recruiterScore(projectBlocks, resume);
+  const authenticity = duplicateScore(projectBlocks);
+  const noIrrelevantContent = irrelevantContentScore(resumeContext, resume);
+  const unsupportedRisk = Math.max(0, 100 - (unsupported.length * 25));
+  const relevanceScore = Math.max(0, Math.min(100, Math.round(
+    (roleRelevance * 0.22) +
+    (skillAuthenticity * 0.2) +
+    (responsibilityAlignment * 0.22) +
+    (chronology * 0.12) +
+    (readability * 0.14) +
+    (noIrrelevantContent * 0.1)
+  )));
+  const analysis = {
+    ats_score: atsScore,
+    keyword_match_score: report?.keywordCoverage ?? atsMatchScore(rows),
+    role_relevance_score: roleRelevance,
+    responsibility_alignment_score: responsibilityAlignment,
+    seniority_alignment_score: chronology,
+    recruiter_readability_score: readability,
+    authenticity_score: authenticity,
+    chronological_growth_score: chronology,
+    skills_authenticity_score: skillAuthenticity,
+    unsupported_keyword_risk_score: unsupportedRisk,
+    relevance_score: relevanceScore,
+    missing_keywords: missing,
+    matched_keywords: matched,
+    transferable_keywords: transferable,
+    unsupported_keywords: unsupported,
+    removed_irrelevant_content: unique(removedIrrelevantContent),
+    rewritten_sections: rewrites ? ["Project Experience"] : [],
+    improvement_summary: "",
+    final_resume_status: "ready_best_possible"
+  };
+  analysis.improvement_summary = improvementSummary(previousAnalysis, analysis, rewrites);
+  analysis.final_resume_status = finalResumeStatus(analysis, report);
+  return analysis;
+}
+
 function qualityGateScore({ data, resume, projectBlocks, groupedSkills, jobKeywordGroups }) {
   const roleTrack = inferRoleTrack(data.jobTitle);
-  const requirements = unique([
-    ...jobKeywordGroups.requiredSkills,
-    ...jobKeywordGroups.preferredSkills,
-    ...jobKeywordGroups.businessKeywords,
-    ...jobKeywordGroups.technicalKeywords,
-    ...jobKeywordGroups.toolsPlatformsMethodologies,
-    ...jobKeywordGroups.softSkills,
-    ...jobKeywordGroups.domainKeywords
-  ]);
-  const keywordCoverage = scoreCoverage(requirements, resume);
-  const roleAlignment = scoreCoverage(roleTerminology(roleTrack), resume);
+  const keywordCoverage = atsMatchScore(requirementRows(data, projectBlocks, groupedSkills, jobKeywordGroups));
+  const roleAlignment = scoreCoverage(roleTerminology(roleTrack, data.skillClassification), resume);
   const skillsAlignment = scoreCoverage(flattenGroupedSkills(groupedSkills), resume);
   const recruiterReadability = recruiterScore(projectBlocks, resume);
   const projectQuality = projectQualityScore(projectBlocks, resume);
   const authenticity = duplicateScore(projectBlocks);
   const careerProgression = progressionScore(projectBlocks);
-  const penalty = contaminationPenalty(roleTrack, resume, data.jobDescription);
+  const penalty = contaminationPenalty(roleTrack, resume, data.jobDescription, data.candidateProfileText);
 
   return Math.max(0, Math.min(100, Math.round(
     (keywordCoverage * 0.25) +
@@ -1284,17 +1938,23 @@ function qualityGateReport({ data, resume, projectBlocks, groupedSkills, jobKeyw
     ...jobKeywordGroups.softSkills,
     ...jobKeywordGroups.domainKeywords
   ]);
-  const keywordCoverage = scoreCoverage(requirements, resume);
-  const roleAlignment = scoreCoverage(roleTerminology(roleTrack), resume);
+  const keywordCoverage = atsMatchScore(requirementRows(data, projectBlocks, groupedSkills, jobKeywordGroups));
+  const roleAlignment = scoreCoverage(roleTerminology(roleTrack, data.skillClassification), resume);
   const skillsAlignment = scoreCoverage(flattenGroupedSkills(groupedSkills), resume);
   const recruiter = recruiterScore(projectBlocks, resume);
   const authenticity = duplicateScore(projectBlocks);
   const projectQuality = projectQualityScore(projectBlocks, resume);
   const careerProgression = progressionScore(projectBlocks);
-  const roleContamination = contaminationPenalty(roleTrack, resume, data.jobDescription);
+  const roleContamination = contaminationPenalty(roleTrack, resume, data.jobDescription, data.candidateProfileText);
   const atsScore = qualityGateScore({ data, resume, projectBlocks, groupedSkills, jobKeywordGroups });
+  const validationErrors = validateGeneratedResume(data, resume, projectBlocks, {
+    authenticity,
+    keywordCoverage,
+    roleContamination
+  });
 
   return {
+    allowedTerms: data.skillClassification?.allowedTerms || [],
     atsScore,
     authenticity,
     careerProgression,
@@ -1304,7 +1964,9 @@ function qualityGateReport({ data, resume, projectBlocks, groupedSkills, jobKeyw
     requirements,
     roleAlignment,
     roleContamination,
-    skillsAlignment
+    skillClassification: data.skillClassification || {},
+    skillsAlignment,
+    validationErrors
   };
 }
 
@@ -1315,32 +1977,98 @@ function passesFinalGate(report) {
     report.authenticity >= 90 &&
     report.keywordCoverage >= 95 &&
     report.projectQuality >= 90 &&
-    report.roleContamination <= 5;
+    report.roleContamination <= 5 &&
+    !report.validationErrors.length;
+}
+
+function blockingValidationErrors(errors = []) {
+  const nonBlocking = new Set([
+    "keyword_coverage_low",
+    "role_contamination",
+    "unsupported_skill_claim"
+  ]);
+  return errors.filter((error) => !nonBlocking.has(error));
+}
+
+function hasMeaningfulGeneration(report) {
+  return !!report &&
+    report.authenticity >= 90 &&
+    blockingValidationErrors(report.validationErrors).length === 0;
 }
 
 function missingCoverageTerms(report, resume, roleTrack, jobDescription) {
   const forbidden = contaminationTerms(roleTrack).filter((term) => !normalize(jobDescription).includes(term.toLowerCase()));
+  const allowedTerms = report.skillClassification?.resumeSafeTerms || report.allowedTerms || report.requirements || [];
   return unique([
-    ...report.requirements,
-    ...roleTerminology(roleTrack)
+    ...allowedTerms,
+    ...roleTerminology(roleTrack, report.skillClassification)
   ])
     .filter((term) => !contentContains(resume, term))
     .filter((term) => !forbidden.some((blocked) => normalize(blocked) === normalize(term)))
     .slice(0, 10);
 }
 
-function bulletSet(project, level, skills, jobMap) {
-  const roleTrack = inferRoleTrack(form.elements.jobTitle.value);
-  const actions = roleActions(roleTrack, level);
+function extractClientLines(resume) {
+  return String(resume || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^Client\s*:/i.test(line))
+    .map((line) => line.replace(/^Client\s*:\s*/i, "").split(/\s{2,}/)[0].trim())
+    .filter(Boolean);
+}
+
+function validateGeneratedResume(resumeContext, resume, projectBlocks, reportBase = {}) {
+  const errors = [];
+  const placeholderPattern = /\[Insert|Candidate Name Here|Client Here|Role Here|TBD|Placeholder|\{\{[^}]*\}\}|\[\[[^\]]+\]\]/i;
+  if (!contentContains(resume, resumeContext.candidateName)) {
+    errors.push("candidate_name_missing");
+  }
+  if (placeholderPattern.test(resume)) {
+    errors.push("placeholder_remaining");
+  }
+  const expectedClients = resumeContext.clients.map((client) => normalize(client));
+  const actualClients = extractClientLines(resume).map((client) => normalize(client));
+  if (expectedClients.length !== actualClients.length || expectedClients.some((client, index) => actualClients[index] !== client)) {
+    errors.push("client_mismatch");
+  }
+  if (projectBlocks.some((project, index) => normalize(project.clientName) !== expectedClients[index])) {
+    errors.push("project_client_mismatch");
+  }
+  if (projectBlocks.some((project, index) => project.duration !== resumeContext.durations[index])) {
+    errors.push("duration_mismatch");
+  }
+  const expectedRoles = resumeContext.projects.map((project, index) => resolveProjectRole(project, resumeContext.yearsOfExperience, index, resumeContext.targetJobTitle));
+  if (projectBlocks.some((project, index) => project.role !== expectedRoles[index])) {
+    errors.push("role_progression_mismatch");
+  }
+  if ((reportBase.authenticity ?? duplicateScore(projectBlocks)) < 90) {
+    errors.push("duplicate_bullets");
+  }
+  if ((reportBase.roleContamination ?? contaminationPenalty(inferRoleTrack(resumeContext.targetJobTitle), resume, resumeContext.jobDescription, resumeContext.candidateProfileText)) > 5) {
+    errors.push("role_contamination");
+  }
+  const unsupportedClaims = unsupportedClaimKeywords(resumeContext, resume);
+  if (unsupportedClaims.length) {
+    errors.push("unsupported_skill_claim");
+  }
+  if ((reportBase.keywordCoverage ?? 0) < 95) {
+    errors.push("keyword_coverage_low");
+  }
+  return errors;
+}
+
+function bulletSet(project, level, skills, jobMap, resumeContext) {
+  const roleTrack = inferRoleTrack(resumeContext.targetJobTitle);
+  const actions = authenticRoleActions(roleTrack, level, resumeContext.skillClassification);
   const terms = domainTerms(project.domain);
-  const role = cleanRoleTitle(form.elements.jobTitle.value);
+  const role = cleanRoleTitle(resumeContext.targetJobTitle);
   const index = project.sequence || 0;
   const topSkills = rotatedItems(skills, index, 4);
   const skillPhrase = topSkills.length ? topSkills.join(", ") : "target-role practices";
   const cloud = project.cloud || skills.find((skill) => ["AWS", "Azure", "GCP"].includes(skill));
   const focus = projectNarrativeFocus(project, index, level);
   const profile = domainProfile(project.domain);
-  const artifacts = rotatedItems(roleArtifacts(roleTrack), index * 2, 4);
+  const artifacts = rotatedItems(authenticRoleArtifacts(roleTrack, resumeContext.skillClassification), index * 2, 4);
   const metrics = rotatedItems(metricBank(roleTrack), index * 2, 2);
   const context = {
     actions,
@@ -1366,22 +2094,23 @@ function bulletSet(project, level, skills, jobMap) {
   ];
 }
 
-function buildExperience(projects, years, groupedSkills, jobMap) {
-  return buildProjectBlocks(projects, years, groupedSkills, jobMap)
+function buildExperience(projects, years, groupedSkills, jobMap, resumeContext) {
+  return buildProjectBlocks(projects, years, groupedSkills, jobMap, resumeContext)
     .map((project) => project.text)
     .join("\n\n");
 }
 
-function buildProjectBlocks(projects, years, groupedSkills, jobMap) {
+function buildProjectBlocks(projects, years, groupedSkills, jobMap, resumeContext) {
   const allSkills = unique(Object.values(groupedSkills).flat());
   return projects.map((project, index) => {
     const level = careerLevel(Number(years), index, projects.length);
-    const bullets = bulletSet(project, level, allSkills, jobMap).map((line) => `- ${line}`);
-    const role = suggestedDesignation(Number(years), index);
-    const text = `Client: ${project.clientName}                             ${project.duration}
-Role: ${role}
-Responsibilities:
-${bullets.join("\n")}`;
+    const bullets = bulletSet(project, level, allSkills, jobMap, resumeContext).map((line) => `- ${line}`);
+    const role = resolveProjectRole(project, Number(years), index, resumeContext.targetJobTitle);
+    const text = buildProjectText({
+      ...project,
+      role,
+      bullets
+    });
     return {
       ...project,
       role,
@@ -1416,10 +2145,49 @@ function replaceSection(template, headingPattern, content) {
   return `${template.slice(0, start)}\n${content.trim()}\n${template.slice(end)}`;
 }
 
+function replaceCandidateName(template, candidateName) {
+  let resume = String(template || "");
+  if (!candidateName) return resume;
+  const placeholders = [
+    /\[Insert Candidate Name Here\]/gi,
+    /\[Candidate Name Here\]/gi,
+    /Candidate Name Here/gi,
+    /\{\{\s*candidate\s*name\s*\}\}/gi,
+    /\{\{\s*candidateName\s*\}\}/gi,
+    /\[\[\s*candidate\s*name\s*\]\]/gi
+  ];
+  placeholders.forEach((pattern) => {
+    resume = resume.replace(pattern, candidateName);
+  });
+  if (resume === template) {
+    const lines = resume.split("\n");
+    const firstContentIndex = lines.findIndex((line) => line.trim());
+    if (firstContentIndex >= 0 && !/^(summary|professional summary|it skills|technical skills|skills|work experience|professional experience|experience|client|role|responsibilities)\s*:?$/i.test(lines[firstContentIndex].trim())) {
+      lines[firstContentIndex] = candidateName;
+      resume = lines.join("\n");
+    }
+  }
+  return resume;
+}
+
+function replaceSequentialTextMarkers(text, markerPattern, replacements) {
+  let index = 0;
+  return String(text || "").replace(markerPattern, () => {
+    const value = replacements[index] || "";
+    index += 1;
+    return value;
+  });
+}
+
 function populateTemplate(template, sections) {
   let resume = template?.trim() || sampleTemplate;
+  resume = replaceCandidateName(resume, sections.candidateName);
   resume = resume.replace(/\[Insert Job Title Here\]/gi, sections.jobTitle);
+  resume = resume.replace(/\[Target Job Title Here\]/gi, sections.jobTitle);
   resume = resume.replace(/\[Insert Skill Matrix Here\]/gi, sections.skills);
+  resume = replaceSequentialTextMarkers(resume, /\[Client Here\]|Client Here/gi, sections.projectBlocks.map((project) => project.clientName));
+  resume = replaceSequentialTextMarkers(resume, /\[Project Duration Here\]|\[Duration Here\]|Project Duration Here|Duration Here/gi, sections.projectBlocks.map((project) => project.duration));
+  resume = replaceSequentialTextMarkers(resume, /\[Role Here\]|Role Here/gi, sections.projectBlocks.map((project) => project.role));
 
   const bulletPlaceholder = "[Insert Bullet points Here]";
   if (resume.includes(bulletPlaceholder)) {
@@ -1446,10 +2214,12 @@ function buildResumeDraft(data, projects, groupedSkills, jobMap, correctionTerms
   const summaryLineList = summaryLines({ ...data, projects, groupedSkills, jobDescription: data.jobDescription, correctionTerms });
   const skills = buildSkillMatrix(groupedSkills, data.jobDescription);
   const skillLines = skills.split("\n").filter(Boolean);
-  const projectBlocks = buildProjectBlocks(projects, data.years, groupedSkills, jobMap);
+  const projectBlocks = buildProjectBlocks(projects, data.years, groupedSkills, jobMap, data);
   const experience = projectBlocks.map((project) => project.text).join("\n\n");
   const resume = populateTemplate(data.template, {
+    candidateName: data.candidateName,
     jobTitle: data.jobTitle,
+    projectBlocks,
     summary,
     skills,
     experience
@@ -1468,43 +2238,159 @@ function buildResumeDraft(data, projects, groupedSkills, jobMap, correctionTerms
 
 function generateResumeArtifacts(data) {
   alignProjectTimeline();
-  const projects = collectProjects();
-  const jobMap = analyzeJob(data.jobDescription);
-  const groupedSkills = detectSkills(data.jobDescription, data.template, projects);
-  const jobKeywordGroups = detectJobKeywordGroups(data.jobDescription);
-  const roleTrack = inferRoleTrack(data.jobTitle);
+  const resumeContext = createResumeContext(data);
+  const projects = resumeContext.projects;
+  const jobKeywordGroups = detectJobKeywordGroups(resumeContext.jobDescription);
+  const targetAnalysis = analyzeResumeTarget(resumeContext.targetJobTitle, resumeContext.jobDescription, resumeContext.yearsOfExperience);
+  const skillDetection = detectSkills(resumeContext, projects, jobKeywordGroups);
+  const groupedSkills = skillDetection.groupedSkills;
+  const jobMap = targetAnalysis.jobMap;
+  resumeContext.skills = flattenGroupedSkills(groupedSkills);
+  resumeContext.candidateProfileText = skillDetection.profileText;
+  resumeContext.skillClassification = skillDetection.classification;
+  resumeContext.targetAnalysis = targetAnalysis;
+  const roleTrack = inferRoleTrack(resumeContext.targetJobTitle);
   let correctionTerms = [];
   let draft = null;
   let report = null;
+  let relevanceAnalysis = null;
 
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    draft = buildResumeDraft(data, projects, groupedSkills, jobMap, correctionTerms);
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    draft = buildResumeDraft(resumeContext, projects, groupedSkills, jobMap, correctionTerms);
+    const duplicateRepair = rewriteDuplicateProjectBullets(draft.projectBlocks, resumeContext, groupedSkills, attempt);
+    if (duplicateRepair.rewrites) {
+      draft = rebuildDraftWithProjectBlocks(draft, resumeContext, duplicateRepair.projectBlocks);
+    }
     report = qualityGateReport({
-      data,
+      data: resumeContext,
       resume: draft.resume,
       projectBlocks: draft.projectBlocks,
       groupedSkills,
       jobKeywordGroups
     });
+    relevanceAnalysis = atsRelevanceAnalysis({
+      resumeContext,
+      resume: draft.resume,
+      projectBlocks: draft.projectBlocks,
+      groupedSkills,
+      jobKeywordGroups,
+      report,
+      rewrites: duplicateRepair.rewrites
+    });
+    const shouldOptimizeRelevance = attempt < 5 && (
+      attempt === 0 ||
+      relevanceAnalysis.ats_score < 90 ||
+      relevanceAnalysis.relevance_score < 80 ||
+      relevanceAnalysis.unsupported_keywords.length ||
+      report.projectQuality < 75 ||
+      report.roleContamination > 5
+    );
+    if (shouldOptimizeRelevance) {
+      const previousAnalysis = relevanceAnalysis;
+      const optimized = optimizeDraftForAtsRelevance(draft, resumeContext, projects, groupedSkills, jobKeywordGroups, attempt);
+      draft = optimized.draft;
+      report = qualityGateReport({
+        data: resumeContext,
+        resume: draft.resume,
+        projectBlocks: draft.projectBlocks,
+        groupedSkills,
+        jobKeywordGroups
+      });
+      relevanceAnalysis = atsRelevanceAnalysis({
+        resumeContext,
+        resume: draft.resume,
+        projectBlocks: draft.projectBlocks,
+        groupedSkills,
+        jobKeywordGroups,
+        report,
+        previousAnalysis,
+        removedIrrelevantContent: optimized.removedIrrelevantContent,
+        rewrites: optimized.rewrites
+      });
+    }
     if (passesFinalGate(report)) break;
-    const nextTerms = missingCoverageTerms(report, draft.resume, roleTrack, data.jobDescription);
+    const nextTerms = missingCoverageTerms(report, draft.resume, roleTrack, resumeContext.jobDescription);
     const merged = unique([...correctionTerms, ...nextTerms]);
-    if (merged.length === correctionTerms.length) break;
+    const canKeepRefiningDuplicates = report.validationErrors.includes("duplicate_bullets") && attempt < 5;
+    if (merged.length === correctionTerms.length && !canKeepRefiningDuplicates) break;
     correctionTerms = merged;
   }
 
-  const matchRows = requirementRows(data, projects, groupedSkills, jobKeywordGroups);
-  const score = report?.atsScore || 0;
+  const hadGenericPhrasesBeforeFinalOptimization = draft ? containsGenericResumePhrases(draft.resume) : false;
+  if (draft && (hadGenericPhrasesBeforeFinalOptimization || (relevanceAnalysis?.relevance_score || 0) < 90)) {
+    const previousAnalysis = relevanceAnalysis;
+    const optimized = optimizeDraftForAtsRelevance(draft, resumeContext, projects, groupedSkills, jobKeywordGroups, 6);
+    draft = optimized.draft;
+    report = qualityGateReport({
+      data: resumeContext,
+      resume: draft.resume,
+      projectBlocks: draft.projectBlocks,
+      groupedSkills,
+      jobKeywordGroups
+    });
+    relevanceAnalysis = atsRelevanceAnalysis({
+      resumeContext,
+      resume: draft.resume,
+      projectBlocks: draft.projectBlocks,
+      groupedSkills,
+      jobKeywordGroups,
+      report,
+      previousAnalysis,
+      removedIrrelevantContent: [
+        ...optimized.removedIrrelevantContent,
+        ...(hadGenericPhrasesBeforeFinalOptimization ? ["Generic resume phrases removed"] : [])
+      ],
+      rewrites: optimized.rewrites
+    });
+  }
+
+  const matchRows = requirementRows(resumeContext, projects, groupedSkills, jobKeywordGroups);
+  const score = relevanceAnalysis?.ats_score || report?.atsScore || 0;
   const missing = rowsByStatus(matchRows, "Missing");
   const finalOutput = `ATS SCORE: ${score}%\n\n${draft.resume}`;
+  const finalStatus = relevanceAnalysis?.final_resume_status || "ready_best_possible";
+  const validationPassed = hasMeaningfulGeneration(report) &&
+    !/^blocked_/.test(finalStatus);
 
   return {
-    jobTitle: data.jobTitle,
+    ats_score: score,
+    keyword_match_score: relevanceAnalysis?.keyword_match_score || report?.keywordCoverage || 0,
+    role_relevance_score: relevanceAnalysis?.role_relevance_score || report?.roleAlignment || 0,
+    recruiter_readability_score: relevanceAnalysis?.recruiter_readability_score || report?.recruiter || 0,
+    authenticity_score: relevanceAnalysis?.authenticity_score || report?.authenticity || 0,
+    chronological_growth_score: relevanceAnalysis?.chronological_growth_score || report?.careerProgression || 0,
+    relevance_score: relevanceAnalysis?.relevance_score || 0,
+    missing_keywords: relevanceAnalysis?.missing_keywords || missing,
+    matched_keywords: relevanceAnalysis?.matched_keywords || rowsByStatus(matchRows, "Strong Match"),
+    transferable_keywords: relevanceAnalysis?.transferable_keywords || rowsByStatus(matchRows, "Partial Match"),
+    unsupported_keywords: relevanceAnalysis?.unsupported_keywords || [],
+    removed_irrelevant_content: relevanceAnalysis?.removed_irrelevant_content || [],
+    rewritten_sections: relevanceAnalysis?.rewritten_sections || [],
+    improvement_summary: relevanceAnalysis?.improvement_summary || "",
+    final_resume_status: finalStatus,
+    jobTitle: resumeContext.targetJobTitle,
+    candidateName: resumeContext.candidateName,
+    resumeContext,
     atsMatchScore: score,
+    keywordMatchScore: relevanceAnalysis?.keyword_match_score || report?.keywordCoverage || 0,
+    roleRelevanceScore: relevanceAnalysis?.role_relevance_score || report?.roleAlignment || 0,
+    recruiterReadabilityScore: relevanceAnalysis?.recruiter_readability_score || report?.recruiter || 0,
+    authenticityScore: relevanceAnalysis?.authenticity_score || report?.authenticity || 0,
+    chronologicalGrowthScore: relevanceAnalysis?.chronological_growth_score || report?.careerProgression || 0,
+    relevanceScore: relevanceAnalysis?.relevance_score || 0,
     jobKeywordGroups,
     matchRows,
     missingSkills: missing,
+    matchedKeywords: relevanceAnalysis?.matched_keywords || rowsByStatus(matchRows, "Strong Match"),
+    transferableKeywords: relevanceAnalysis?.transferable_keywords || rowsByStatus(matchRows, "Partial Match"),
+    unsupportedKeywords: relevanceAnalysis?.unsupported_keywords || [],
+    removedIrrelevantContent: relevanceAnalysis?.removed_irrelevant_content || [],
+    rewrittenSections: relevanceAnalysis?.rewritten_sections || [],
+    improvementSummary: relevanceAnalysis?.improvement_summary || "",
+    finalResumeStatus: finalStatus,
+    atsRelevanceAnalysis: relevanceAnalysis,
     qualityReport: report,
+    validationPassed,
     summary: draft.summary,
     summaryLines: draft.summaryLines,
     skills: draft.skills,
@@ -1586,7 +2472,7 @@ function setActiveTemplate(templateId, options = {}) {
     buffer: selected.docxBuffer
   } : null;
   invalidateGeneratedResume("");
-  setStatus("template_uploaded", "success");
+  setStatus("Template uploaded.", "success");
   if (!options.silentValidation) {
     updateUploadedValidation();
   }
@@ -1652,11 +2538,15 @@ function removeTemplate(templateId) {
 
 function validateResumeInputs(data) {
   const missing = [];
+  if (!String(data.candidateName || "").trim()) missing.push("candidate name");
   if (!String(data.jobTitle || "").trim()) missing.push("target job title");
   if (!String(data.years || "").trim()) missing.push("years of experience");
   if (!String(data.jobDescription || "").trim()) missing.push("target job description");
   if (!String(data.template || "").trim()) missing.push("resume template");
-  if (!collectProjects().length) missing.push("at least one project");
+  const projects = collectProjects();
+  if (!projects.length) missing.push("at least one project");
+  if (projects.some((project) => !project.clientName)) missing.push("client names");
+  if (projects.some((project) => !project.domain)) missing.push("project domains");
   if (missing.length) {
     return `Required: ${missing.join(", ")}.`;
   }
@@ -1704,10 +2594,17 @@ form.addEventListener("submit", (event) => {
     setStatus(validationMessage, "error");
     return;
   }
+  setStatus("Improving resume quality...", "neutral");
   latestResumeArtifacts = generateResumeArtifacts(data);
+  if (!latestResumeArtifacts.validationPassed) {
+    resumeReady = false;
+    outputEl.textContent = "";
+    setStatus(FINAL_GENERATION_FAILURE_MESSAGE, "error");
+    return;
+  }
   resumeReady = true;
   outputEl.textContent = latestResumeArtifacts.resume;
-  setStatus("resume_ready", "success");
+  setStatus("Resume ready to download/copy.", "success");
 });
 
 document.querySelector("#addProjectBtn").addEventListener("click", () => {
@@ -1727,26 +2624,13 @@ yearsInput.addEventListener("input", () => {
   alignProjectTimeline();
   markDraftChanged();
 });
-form.elements.jobTitle.addEventListener("input", markDraftChanged);
+form.elements.jobTitle.addEventListener("input", () => {
+  alignProjectTimeline();
+  markDraftChanged();
+});
 form.elements.jobDescription.addEventListener("input", markDraftChanged);
 templateArea.addEventListener("input", markDraftChanged);
 projectsEl.addEventListener("input", markDraftChanged);
-
-document.querySelector("#jobDescriptionFile").addEventListener("change", async (event) => {
-  const [file] = event.target.files;
-  if (!file) return;
-  try {
-    const text = await extractFileText(file);
-    if (!text.trim()) throw new Error("No readable text was found in this file.");
-    form.elements.jobDescription.value = text;
-    latestResumeArtifacts = null;
-    resumeReady = false;
-    outputEl.textContent = "";
-    setStatus(activeTemplateId ? "template_uploaded" : "", activeTemplateId ? "success" : "neutral");
-  } catch (error) {
-    setStatus(error.message, "error");
-  }
-});
 
 document.querySelector("#templateFile").addEventListener("change", async (event) => {
   const files = [...event.target.files];
@@ -1768,45 +2652,45 @@ document.querySelector("#templateFile").addEventListener("change", async (event)
     storedTemplates = [...storedTemplates, ...addedTemplates];
     setActiveTemplate(addedTemplates[0].id);
     updateUploadedValidation();
-    setStatus("template_uploaded", "success");
+    setStatus("Template uploaded.", "success");
     event.target.value = "";
   } catch (error) {
-    setStatus(error.message, "error");
+    setStatus("Template upload could not be completed. Please use a readable resume template file.", "error");
   }
 });
 
 document.querySelector("#copyBtn").addEventListener("click", async () => {
   if (copyBtn.disabled || !outputEl.textContent.trim()) return;
   await navigator.clipboard.writeText(outputEl.textContent);
-  setStatus("resume_ready", "success");
+  setStatus("Resume copied.", "success");
 });
 
 document.querySelector("#downloadBtn").addEventListener("click", async () => {
   if (!resumeReady || !latestResumeArtifacts || !outputEl.textContent.trim()) {
-    setStatus("resume_required: click Generate resume first", "error");
+    setStatus("Generate the resume before downloading.", "error");
     return;
   }
   const artifacts = latestResumeArtifacts;
 
   if (!uploadedDocxTemplate) {
-    setStatus("template_required: select an uploaded .docx resume template first", "error");
+    setStatus("Select an uploaded .docx resume template before downloading.", "error");
     return;
   }
 
   try {
     const docxBlob = await buildDocxFromUploadedTemplate(artifacts);
     downloadBlob(docxBlob, downloadFileName(artifacts, "docx"));
-    setStatus("resume_ready", "success");
+    setStatus("Resume downloaded.", "success");
   } catch (error) {
-    setStatus(error.message, "error");
+    setStatus("Download could not be completed. Please select a valid .docx resume template.", "error");
   }
 });
 
 function updateStatusTone() {
   const value = statusText.textContent.toLowerCase();
-  if (/error|could not|no readable|failed|upload your|template_required|resume_required|required/.test(value)) {
+  if (/error|could not|no readable|failed|upload your|required|needs more specific|before downloading|select an uploaded/.test(value)) {
     statusText.dataset.state = "error";
-  } else if (/downloaded|generated|loaded|copied|uploaded|resume_ready|resume_copied|resume_downloaded/.test(value)) {
+  } else if (/downloaded|generated|loaded|copied|uploaded|resume ready/.test(value)) {
     statusText.dataset.state = "success";
   } else {
     statusText.dataset.state = "neutral";
