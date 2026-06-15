@@ -15,9 +15,9 @@ let generatedParagraphId = 0x10000000;
 let storedTemplates = [];
 let activeTemplateId = null;
 let resumeReady = false;
-const DUPLICATE_BULLET_THRESHOLD = 0.3;
+const DUPLICATE_BULLET_THRESHOLD = 0.62;
 const DUPLICATE_REWRITE_PASSES = 4;
-const FINAL_GENERATION_FAILURE_MESSAGE = "Resume generation needs more specific project details. Please add more client/domain/project information.";
+const FINAL_GENERATION_FAILURE_MESSAGE = "Resume generation could not be finalized. Please review the highlighted input guidance and regenerate.";
 
 const sampleTemplate = `Namratha K
 [Insert Job Title Here]+1 (913)-253-6619 | namratha.k0322@gmail.com
@@ -51,19 +51,21 @@ Responsibilities:
 [Insert Bullet points Here]`;
 
 const skillBank = {
-  "Programming Languages": ["C#", "Java", "JavaScript", "TypeScript", "Python", "SQL", "Bash", "PowerShell"],
-  "Frameworks and CMS": ["Sitecore XP", "Sitecore XM", "Sitecore", "SXA", "Helix", ".NET", "ASP.NET MVC", "ASP.NET Core", "MVC", "Spring Boot", "Spring MVC", "React", "Angular", "Node.js", "Hibernate", "JPA"],
+  "Programming Languages": ["C#", "Java", "Go", "Golang", "JavaScript", "TypeScript", "Python", "SQL", "Bash", "PowerShell", "HTML", "CSS", "SCSS", "LINQ"],
+  "Frameworks and CMS": ["Sitecore XP", "Sitecore XM", "Sitecore", "Sitecore MVC", "Sitecore JSS", "Sitecore Headless Services", "Sitecore CLI", "Sitecore PowerShell Extensions", "SXA", "Helix", ".NET", ".NET Framework", ".NET Core", "ASP.NET MVC", "ASP.NET Core", "ASP.NET Web API", "MVC", "Spring Boot", "Spring MVC", "React", "Angular", "Node.js", "Hibernate", "JPA", "Entity Framework"],
   "Cloud Platforms": ["AWS", "Azure", "GCP"],
   "Databases": ["PostgreSQL", "MySQL", "Oracle", "MongoDB", "DynamoDB", "SQL Server"],
-  "CMS Authoring and Presentation": ["Content Editor", "Experience Editor", "Sitecore Workflows", "Templates", "Renderings", "Layouts", "Placeholder Settings", "Content Items", "Media Library"],
+  "CMS Authoring and Presentation": ["Content Editor", "Experience Editor", "Sitecore Workflows", "Templates", "Renderings", "Layouts", "Placeholder Settings", "Content Items", "Media Library", "Presentation Details", "Datasources", "Component Rendering", "Page Authoring"],
   "Search and Indexing": ["Solr", "Coveo", "Sitecore Search"],
-  "Integration Technologies": ["REST APIs", "GraphQL", "SOAP", "JSON", "XML"],
+  "Integration Technologies": ["REST APIs", "ASP.NET Web API", "GraphQL", "SOAP", "JSON", "XML", "API Integration", "Third-Party Integrations"],
   "Messaging Technologies": ["Kafka", "RabbitMQ", "SQS", "SNS", "ActiveMQ"],
-  "DevOps Tools": ["Docker", "Kubernetes", "Terraform", "Maven", "Gradle", "PowerShell", "Ansible", "Helm"],
-  "CI/CD Tools": ["Jenkins", "GitHub Actions", "GitLab CI", "Azure DevOps"],
-  "Testing Tools": ["xUnit", "NUnit", "MSTest", "JUnit", "Mockito", "Jest", "Cypress", "Selenium"],
+  "DevOps Tools": ["Docker", "Kubernetes", "Terraform", "Maven", "Gradle", "PowerShell", "Ansible", "Helm", "IIS", "NuGet", "Octopus Deploy"],
+  "CI/CD Tools": ["CI/CD", "Jenkins", "GitHub Actions", "GitLab CI", "Azure DevOps", "TeamCity"],
+  "Testing Tools": ["xUnit", "NUnit", "MSTest", "JUnit", "Mockito", "Jest", "Cypress", "Selenium", "Postman", "Swagger"],
   "Monitoring Tools": ["Application Insights", "CloudWatch", "Splunk", "Grafana", "Prometheus", "ELK"],
+  "Observability": ["Observability", "Logging", "Metrics", "Tracing", "OpenTelemetry", "Datadog", "Prometheus", "Grafana", "Splunk"],
   "Version Control": ["Git", "Bitbucket", "GitHub", "GitLab"],
+  "Developer Platform Tools": ["Developer Tools", "Platform Automation", "Internal Developer Platform", "Service Catalog", "Backstage", "Golden Path", "Self-Service Tooling"],
   "Methodologies": ["Agile", "Scrum", "Kanban", "SDLC", "Waterfall", "SAFe"],
   "Architecture Patterns": ["Microservices", "Event Driven", "REST", "SOA", "Monolithic"],
   "Security Technologies": ["OAuth2", "JWT", "Spring Security", "IAM"],
@@ -79,25 +81,29 @@ const defaultProjects = [
     clientName: "CVS Health, USA",
     designation: "Senior Sitecore Developer",
     domain: "Healthcare",
-    cloud: "AWS"
+    cloud: "AWS",
+    duration: "Dec 2025 - Present"
   },
   {
     clientName: "World Kinect Corporation, USA",
     designation: "Sitecore Developer",
     domain: "Logistics",
-    cloud: "AWS"
+    cloud: "AWS",
+    duration: "Jan 2024 - Dec 2025"
   },
   {
     clientName: "Infosys - CISCO, India",
     designation: "Software Engineer",
     domain: "Telecom",
-    cloud: ""
+    cloud: "",
+    duration: "Dec 2021 - Dec 2022"
   },
   {
     clientName: "TCS - Ericsson, India",
     designation: "Associate Software Engineer",
     domain: "Telecom",
-    cloud: ""
+    cloud: "",
+    duration: "Jan 2018 - Dec 2021"
   }
 ];
 
@@ -106,6 +112,9 @@ function addProject(values = {}) {
   for (const [key, value] of Object.entries(values)) {
     const input = node.querySelector(`[name="${key}"]`);
     if (input) input.value = value;
+  }
+  if (values.duration) {
+    node.dataset.duration = values.duration;
   }
   node.querySelector(".remove-project").addEventListener("click", () => {
     if (projectsEl.children.length > 1) {
@@ -174,10 +183,52 @@ function skillMatchesFromText(text) {
   }, {});
 }
 
+function extractJDRequirements(jobDescription, targetJobTitle = "") {
+  const text = normalize(`${targetJobTitle} ${jobDescription}`);
+  const findSkills = (skills) => unique(skills.filter((skill) => text.includes(skill.toLowerCase())));
+  const yearsMatch = String(jobDescription || "").match(/(\d+)\+?\s*(?:years|yrs)/i);
+  const backendSignals = /backend|back-end|api|apis|rest|microservice|service integration|platform service|distributed system|server-side/.test(text);
+  const platformSignals = /platform engineer|platform engineering|developer platform|internal developer|developer tools|service catalog|golden path|self-service|platform automation/.test(text);
+  const sreSignals = /sre|site reliability|reliability|incident response|on-call|observability|slo|sla|monitoring|alerting|runbook/.test(text);
+  const devopsSignals = /ci\/cd|pipeline|docker|kubernetes|terraform|jenkins|github actions|gitlab ci|deployment|infrastructure/.test(text);
+  const frontendSignals = /front.?end|css|html|react|angular|ui|styling/.test(text);
+  const cmsSignals = /sitecore|cms|content management|sxa|helix/.test(text);
+  const roleFamily = (platformSignals && (backendSignals || devopsSignals || sreSignals))
+    ? "platformEngineering"
+    : (backendSignals && (devopsSignals || sreSignals) ? "backendPlatformEngineering" : "");
+
+  return {
+    targetJobTitle: cleanRoleTitle(targetJobTitle),
+    requiredYears: yearsMatch ? Number(yearsMatch[1]) : null,
+    roleFamily,
+    requiredProgrammingLanguages: findSkills(skillBank["Programming Languages"]),
+    backendApiRequirements: unique([
+      ...findSkills(["REST APIs", "API Integration", "Microservices", "Spring Boot", "ASP.NET Web API", "GraphQL"]),
+      ...(/backend|platform service|service integration|distributed system/.test(text) ? ["Backend Services"] : [])
+    ]),
+    cloudPlatformRequirements: findSkills(skillBank["Cloud Platforms"]),
+    devopsSreRequirements: unique([
+      ...findSkills(skillBank["DevOps Tools"]),
+      ...findSkills(["SRE", "Incident Response", "Reliability Metrics", "Runbooks", "SLA", "SLO"])
+    ]),
+    observabilityRequirements: findSkills(skillBank["Observability"]),
+    cicdRequirements: findSkills(skillBank["CI/CD Tools"]),
+    developerToolingRequirements: findSkills(skillBank["Developer Platform Tools"]),
+    securityArchitectureRequirements: findSkills([...skillBank["Security Technologies"], ...skillBank["Architecture Patterns"]]),
+    softSkillsCollaborationRequirements: findSkills(["Collaboration", "Communication", "Leadership", "Mentoring", "Ownership", "Problem Solving", "Agile Collaboration"]),
+    backendSignals,
+    platformSignals,
+    sreSignals,
+    devopsSignals,
+    frontendSignals,
+    cmsSignals,
+    isBackendPlatformJD: Boolean(platformSignals || (backendSignals && (devopsSignals || sreSignals)))
+  };
+}
+
 function profileTextFromContext(resumeContext, projects = resumeContext.projects || []) {
   return [
     resumeContext.template,
-    resumeContext.targetJobTitle,
     ...projects.flatMap((project) => [
       project.clientName,
       project.designation,
@@ -185,6 +236,47 @@ function profileTextFromContext(resumeContext, projects = resumeContext.projects
       project.cloud
     ])
   ].join(" ");
+}
+
+function projectEvidenceSkillGroups(resumeContext, projects = resumeContext.projects || []) {
+  const evidenceText = normalize(profileTextFromContext(resumeContext, projects));
+  const groups = {};
+  const addSkills = (category, skills) => {
+    groups[category] = unique([...(groups[category] || []), ...skills]);
+  };
+  const hasAny = (...terms) => terms.some((term) => evidenceText.includes(term));
+
+  if (hasAny("sitecore", "cms", "sxa", "helix")) {
+    addSkills("Frameworks and CMS", ["Sitecore", "Sitecore XP", "Sitecore XM", "Sitecore MVC", "SXA", "Helix", ".NET", "ASP.NET MVC"]);
+    addSkills("Programming Languages", ["C#", "JavaScript", "SQL", "HTML", "CSS", "LINQ"]);
+    addSkills("CMS Authoring and Presentation", ["Content Editor", "Experience Editor", "Templates", "Renderings", "Layouts", "Placeholder Settings", "Datasources", "Media Library", "Presentation Details"]);
+    addSkills("Search and Indexing", ["Solr"]);
+    addSkills("Integration Technologies", ["REST APIs", "JSON", "XML", "API Integration"]);
+    addSkills("Databases", ["SQL Server"]);
+    addSkills("DevOps Tools", ["IIS", "NuGet", "PowerShell"]);
+    addSkills("Testing Tools", ["Postman", "Swagger"]);
+  }
+
+  if (hasAny("developer", "software engineer", "engineer")) {
+    addSkills("Version Control", ["Git"]);
+    addSkills("Methodologies", ["Agile", "Scrum", "SDLC"]);
+    addSkills("Operations and Governance", ["Release Management", "Change Management", "Incident Management"]);
+  }
+
+  if (hasAny("healthcare", "patient", "claims", "member")) {
+    addSkills("Healthcare Domain", ["Healthcare Workflows", "Patient Data", "Claims Processing", "HIPAA Awareness", "Compliance"]);
+  }
+  if (hasAny("logistics", "supply chain", "transportation", "inventory")) {
+    addSkills("Logistics Domain", ["Supply Chain Workflows", "Transportation Operations", "Inventory Visibility", "Operational Reporting"]);
+  }
+  if (hasAny("telecom", "network", "provisioning", "connectivity")) {
+    addSkills("Telecom Domain", ["Telecom Workflows", "Network Operations", "Service Provisioning", "Connectivity Support"]);
+  }
+
+  const cloudSkills = unique(projects.map((project) => project.cloud).filter(Boolean));
+  if (cloudSkills.length) addSkills("Cloud Platforms", cloudSkills);
+
+  return groups;
 }
 
 function roleTransferableTerms(roleTrack) {
@@ -202,8 +294,7 @@ function roleTransferableTerms(roleTrack) {
 }
 
 function analyzeResumeTarget(jobTitle, jobDescription, years) {
-  const roleTrack = inferRoleTrack(jobTitle);
-  const jobMap = analyzeJob(jobDescription);
+  const roleTrack = inferRoleTrack(jobTitle, jobDescription);
   const groups = detectJobKeywordGroups(jobDescription);
   const allSkills = unique([
     ...groups.requiredSkills,
@@ -225,9 +316,24 @@ function analyzeResumeTarget(jobTitle, jobDescription, years) {
       ...groups.toolsPlatformsMethodologies,
       ...groups.softSkills
     ]).slice(0, 10),
-    domainKnowledge: groups.domainKeywords,
-    jobMap
+    domainKnowledge: groups.domainKeywords
   };
+}
+
+function hasRelatedCandidateSkill(skill, candidateSkills) {
+  const normalized = normalize(skill);
+  const aliases = {
+    rest: ["rest apis", "rest api", "api integration"],
+    api: ["rest apis", "asp.net web api", "api integration", "third-party integrations"],
+    mvc: ["asp.net mvc", "sitecore mvc"],
+    ".net": [".net framework", ".net core", "asp.net mvc", "asp.net core", "asp.net web api"],
+    sitecore: ["sitecore xp", "sitecore xm", "sitecore mvc", "sitecore jss", "sitecore headless services"]
+  };
+  const relatedTerms = aliases[normalized] || [];
+  return candidateSkills.some((candidateSkill) => {
+    const candidate = normalize(candidateSkill);
+    return relatedTerms.includes(candidate) || aliases[candidate]?.includes(normalized);
+  });
 }
 
 function classifySkillFit(requirements, candidateSkills, profileText, roleTrack) {
@@ -243,11 +349,12 @@ function classifySkillFit(requirements, candidateSkills, profileText, roleTrack)
     const category = skillCategory(skill);
     const hasExactSkill = candidateSkillSet.some((candidateSkill) => normalize(candidateSkill) === normalized);
     const hasProfileEvidence = normalized && profile.includes(normalized);
+    const hasRelatedSkill = hasRelatedCandidateSkill(skill, candidateSkillSet);
     const hasSameCategory = category && candidateSkillSet.some((candidateSkill) => skillCategory(candidateSkill) === category);
     const hasRoleTransfer = transferableTerms.some((term) => normalize(term) === normalized);
     const isBusinessConcept = /stakeholder|business|customer|quality|performance|release|communication|collaboration|leadership|ownership|problem|agile|healthcare|telecom|logistics|finance|banking|content management/i.test(skill);
 
-    if (hasExactSkill || hasProfileEvidence) {
+    if (hasExactSkill || hasProfileEvidence || hasRelatedSkill) {
       existing.push(skill);
     } else if (hasSameCategory || hasRoleTransfer || isBusinessConcept) {
       transferable.push(skill);
@@ -738,7 +845,10 @@ async function buildDocxFromUploadedTemplate(artifacts) {
 
 function detectSkills(resumeContext, projects, jobKeywordGroups) {
   const profileText = profileTextFromContext(resumeContext, projects);
-  const grouped = skillMatchesFromText(profileText);
+  const grouped = filterSkillsForJD(mergeSkillGroups(
+    skillMatchesFromText(profileText),
+    projectEvidenceSkillGroups(resumeContext, projects)
+  ), jobKeywordGroups, resumeContext);
 
   const addSkills = (category, skills) => {
     grouped[category] = unique([...(grouped[category] || []), ...skills]);
@@ -762,10 +872,10 @@ function detectSkills(resumeContext, projects, jobKeywordGroups) {
     requirements,
     existingSkills,
     profileText,
-    inferRoleTrack(resumeContext.targetJobTitle)
+    inferRoleTrack(resumeContext.targetJobTitle, resumeContext.jobDescription)
   );
   const transferableGroups = transferablesByCategory(classification);
-  const merged = mergeSkillGroups(grouped, transferableGroups);
+  const merged = filterSkillsForJD(mergeSkillGroups(grouped, transferableGroups), jobKeywordGroups, resumeContext);
 
   return {
     groupedSkills: merged,
@@ -774,16 +884,61 @@ function detectSkills(resumeContext, projects, jobKeywordGroups) {
   };
 }
 
-function analyzeJob(jobDescription) {
-  const text = normalize(jobDescription);
-  return {
-    leadership: /lead|mentor|stakeholder|architect|ownership|senior/.test(text),
-    testing: /test|junit|mockito|jest|cypress|selenium/.test(text),
-    devops: /ci\/cd|jenkins|docker|kubernetes|devops|pipeline|azure devops/.test(text),
-    cms: /sitecore|cms|content|experience platform|sxa|helix/.test(text),
-    integration: /api|integration|third.?party|service|rest|graphql/.test(text),
-    search: /solr|coveo|search/.test(text)
-  };
+function filterSkillsForJD(groupedSkills, jobKeywordGroups, resumeContext) {
+  const jdRequirements = jobKeywordGroups.structuredRequirements || extractJDRequirements(resumeContext.jobDescription, resumeContext.targetJobTitle);
+  if (!jdRequirements.isBackendPlatformJD) return groupedSkills;
+  const jdText = normalize(resumeContext.jobDescription);
+  const allowedCategories = new Set([
+    "Programming Languages",
+    "Frameworks and CMS",
+    "Cloud Platforms",
+    "Databases",
+    "Integration Technologies",
+    "Messaging Technologies",
+    "DevOps Tools",
+    "CI/CD Tools",
+    "Monitoring Tools",
+    "Observability",
+    "Version Control",
+    "Developer Platform Tools",
+    "Architecture Patterns",
+    "Security Technologies",
+    "Methodologies"
+  ]);
+  const blockedSkills = new Set(["CSS", "SCSS", "HTML", "Content Editor", "Experience Editor", "Sitecore Workflows", "Templates", "Renderings", "Layouts", "Placeholder Settings", "Media Library", "HIPAA Awareness", "Compliance", "Governance", "Release Management", "Change Management"]);
+  const jdAlignedTerms = unique([
+    ...jdRequirements.requiredProgrammingLanguages,
+    ...jdRequirements.backendApiRequirements,
+    ...jdRequirements.cloudPlatformRequirements,
+    ...jdRequirements.devopsSreRequirements,
+    ...jdRequirements.observabilityRequirements,
+    ...jdRequirements.cicdRequirements,
+    ...jdRequirements.developerToolingRequirements,
+    ...jdRequirements.securityArchitectureRequirements,
+    "Git",
+    "REST APIs",
+    "Microservices",
+    "CI/CD",
+    "Observability",
+    "Logging",
+    "Metrics",
+    "Tracing",
+    "Incident Management"
+  ]).map((term) => normalize(term));
+
+  const filtered = {};
+  Object.entries(groupedSkills).forEach(([category, skills]) => {
+    if (!allowedCategories.has(category)) return;
+    const kept = unique(skills).filter((skill) => {
+      if (blockedSkills.has(skill) && !jdText.includes(skill.toLowerCase())) return false;
+      const skillText = normalize(skill);
+      return jdText.includes(skillText) ||
+        jdAlignedTerms.includes(skillText) ||
+        (category === "Version Control" && skill === "Git");
+    });
+    if (kept.length) filtered[category] = kept;
+  });
+  return filtered;
 }
 
 function careerLevel(years, projectIndex, totalProjects) {
@@ -845,9 +1000,43 @@ function distributeMonths(totalMonths, count) {
   return raw;
 }
 
+function extractProjectDurations(templateText) {
+  const month = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*";
+  const monthYear = `${month}\\s+\\d{4}`;
+  const rangePattern = new RegExp(`${monthYear}\\s*-\\s*(?:Present|${monthYear})`, "i");
+  return String(templateText || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^Client\s*:/i.test(line))
+    .map((line) => {
+      const match = line.match(rangePattern);
+      return match ? match[0].replace(/\s+/g, " ").replace(/\s*-\s*/, " - ") : "";
+    })
+    .filter(Boolean);
+}
+
+function templateDurationsForCards(cards) {
+  const templateDurations = extractProjectDurations(templateArea.value);
+  if (templateDurations.length >= cards.length) return templateDurations;
+  const cardDurations = cards.map((card) => card.dataset.duration).filter(Boolean);
+  return cardDurations.length >= cards.length ? cardDurations : [];
+}
+
 function alignProjectTimeline() {
   const cards = [...projectsEl.querySelectorAll(".project-card")];
   if (!cards.length) return;
+  const preservedDurations = templateDurationsForCards(cards);
+  if (preservedDurations.length) {
+    cards.forEach((card, index) => {
+      card.dataset.duration = preservedDurations[index] || card.dataset.duration || "";
+      const designationInput = card.querySelector('[name="designation"]');
+      const years = Number(yearsInput.value || 0);
+      if (yearsInput.value.trim() && isSeedOrGenericDesignation(designationInput.value)) {
+        designationInput.value = suggestedDesignation(years, index);
+      }
+    });
+    return;
+  }
   if (!yearsInput.value.trim()) {
     cards.forEach((card) => {
       delete card.dataset.duration;
@@ -871,12 +1060,14 @@ function alignProjectTimeline() {
 }
 
 function buildSummary({ jobTitle, years, projects, groupedSkills, jobDescription, skillClassification = {}, correctionTerms = [] }) {
-  const domains = unique(projects.map((project) => project.domain)).slice(0, 3).join(", ");
+  const roleTrack = inferRoleTrack(jobTitle, jobDescription);
+  const domains = roleTrack === "platformEngineering"
+    ? "enterprise application and platform environments"
+    : unique(projects.map((project) => project.domain)).slice(0, 3).join(", ");
   const skills = flattenGroupedSkills(groupedSkills).slice(0, 12);
   const role = cleanRoleTitle(jobTitle);
-  const roleTrack = inferRoleTrack(role);
-  const value = roleValuePhraseForContext(roleTrack, skillClassification);
-  const artifacts = authenticRoleArtifacts(roleTrack, skillClassification);
+  const value = jdValuePhrase(jobDescription, groupedSkills);
+  const artifacts = roleTerminology(roleTrack, skillClassification);
   const allowedTerms = skillClassification.resumeSafeTerms || skillClassification.allowedTerms || [];
   const keywordBridge = unique([summaryKeywordBridge(jobDescription), ...correctionTerms]
     .flatMap((item) => String(item || "").split(",").map((part) => part.trim())))
@@ -887,10 +1078,26 @@ function buildSummary({ jobTitle, years, projects, groupedSkills, jobDescription
 
   return [
     `- ${role} with ${years}+ years of experience delivering ${value} across ${domains || "business-critical domains"}.`,
-    `- Applies ${skills.slice(0, 8).join(", ") || "role-aligned practices"} to translate target-role requirements into practical outcomes, clear deliverables, and measurable execution discipline.`,
-    `- Uses ${artifacts.slice(0, 5).join(", ")}${artifacts.length > 5 ? `, and ${artifacts.slice(5).join(", ")}` : ""} to show role alignment through existing and transferable experience rather than unsupported keyword insertion.`,
+    `- Uses ${skills.slice(0, 8).join(", ") || "role-aligned practices"} to translate target-role requirements into practical outcomes, clear deliverables, and measurable execution discipline.`,
+    `- Uses ${artifacts.slice(0, 5).join(", ")}${artifacts.length > 5 ? `, and ${artifacts.slice(5).join(", ")}` : ""} to describe practical project work without overstating unsupported tools from the job description.`,
     `- Strengthens ${keywordBridge || "business alignment, communication, collaboration, and release readiness"} through stakeholder collaboration, structured analysis, delivery ownership, quality validation, and continuous improvement.`
   ].join("\n");
+}
+
+function jdValuePhrase(jobDescription, groupedSkills) {
+  const jdRequirements = extractJDRequirements(jobDescription);
+  const supported = flattenGroupedSkills(groupedSkills);
+  const supportedText = normalize(supported.join(" "));
+  const hasSupported = (items) => items.some((item) => supportedText.includes(normalize(item)));
+  const phrases = [];
+  if (hasSupported(jdRequirements.backendApiRequirements) || supportedText.includes("rest apis")) phrases.push("backend/API delivery");
+  if (hasSupported(jdRequirements.cloudPlatformRequirements)) phrases.push(`${jdRequirements.cloudPlatformRequirements.filter((skill) => supportedText.includes(normalize(skill))).join("/")} cloud delivery`);
+  if (hasSupported(jdRequirements.devopsSreRequirements)) phrases.push("automation and deployment reliability");
+  if (hasSupported(jdRequirements.observabilityRequirements)) phrases.push("monitoring and operational visibility");
+  if (hasSupported(jdRequirements.cicdRequirements)) phrases.push("CI/CD workflow improvement");
+  if (hasSupported(jdRequirements.developerToolingRequirements)) phrases.push("developer tooling and platform enablement");
+  if (!phrases.length && supported.length) phrases.push(`${supported.slice(0, 5).join(", ")} delivery`);
+  return unique(phrases).slice(0, 5).join(", ") || "target-role delivery";
 }
 
 function summaryLines({ jobTitle, years, projects, groupedSkills, jobDescription, skillClassification = {}, correctionTerms = [] }) {
@@ -929,86 +1136,322 @@ function summaryKeywordBridge(jobDescription) {
   ]).slice(0, 8).join(", ");
 }
 
-function inferRoleTrack(jobTitle) {
+function inferRoleTrack(jobTitle, jobDescription = "") {
   const title = normalize(jobTitle);
+  if (/platform engineer|platform engineering|developer platform|internal developer platform/.test(title)) return "platformEngineering";
+  if (/devops|sre|site reliability|cloud engineer/.test(title)) return "devops";
+  if (/golang|go developer|go engineer|backend developer|backend engineer|api developer/.test(title)) return "backendEngineering";
+  if (/scrum master|agile coach|release train engineer/.test(title)) return "scrumMaster";
   if (/business analyst|ba\b|systems analyst|functional analyst/.test(title)) return "businessAnalysis";
   if (/workday|hcm consultant|workday consultant|workday analyst/.test(title)) return "workday";
-  if (/devops|sre|site reliability|platform engineer|cloud engineer/.test(title)) return "devops";
   if (/product owner|product manager|scrum product/.test(title)) return "product";
   if (/qa|quality|test engineer|automation tester/.test(title)) return "quality";
   if (/data|analytics|bi developer|reporting/.test(title)) return "data";
   if (/project manager|program manager|scrum master/.test(title)) return "delivery";
+  const jdRequirements = extractJDRequirements(jobDescription, jobTitle);
+  if (jdRequirements.isBackendPlatformJD) return "platformEngineering";
   return "technical";
 }
 
-function roleValuePhrase(roleTrack) {
-  return {
-    businessAnalysis: "requirements analysis, process improvement, stakeholder alignment, UAT readiness, and business workflow optimization",
-    workday: "Workday configuration, tenant readiness, business process optimization, security validation, reporting, and HRIS stakeholder enablement",
-    devops: "automation, CI/CD reliability, cloud operations, deployment governance, monitoring, and incident response",
-    product: "roadmap execution, backlog prioritization, stakeholder communication, release planning, and product outcome alignment",
-    quality: "test strategy, defect prevention, automation coverage, release validation, and quality improvement",
-    data: "data analysis, reporting, dashboard insights, data mapping, and decision-support outcomes",
-    delivery: "delivery planning, team coordination, governance, risk management, and release execution",
-    technical: "solution delivery, system enhancement, integration readiness, production support, and cross-functional execution"
-  }[roleTrack] || "target-role delivery";
-}
-
-function roleValuePhraseForContext(roleTrack, classification = {}) {
-  const existingText = normalize([...(classification.existing || []), ...(classification.transferable || [])].join(" "));
-  if (roleTrack === "workday" && !/workday|hcm|tenant|payroll|calculated fields|eib/.test(existingText)) {
-    return "business process analysis, reporting validation, stakeholder enablement, release readiness, and operational workflow improvement";
-  }
-  if (roleTrack === "devops" && !/ci\/cd|docker|kubernetes|terraform|jenkins|azure devops|github actions|monitoring/.test(existingText)) {
-    return "release coordination, production support, monitoring awareness, incident triage, and operational reliability improvement";
-  }
-  return roleValuePhrase(roleTrack);
-}
-
-function authenticRoleArtifacts(roleTrack, classification = {}) {
-  const allowed = unique([...(classification.existing || []), ...(classification.transferable || [])]);
-  const allowedText = normalize(allowed.join(" "));
-  const hasWorkdayEvidence = /workday|hcm|tenant|payroll|calculated fields|eib|security groups/.test(allowedText);
-  const hasDevopsEvidence = /ci\/cd|docker|kubernetes|terraform|jenkins|azure devops|github actions|monitoring|incident management/.test(allowedText);
-  const fallback = {
-    businessAnalysis: ["Requirements Analysis", "User Stories", "Acceptance Criteria", "UAT", "Process Flows", "Data Validation", "Reporting"],
-    workday: ["Business Process Configuration", "Custom Reports", "Tenant Testing", "Data Validation", "Reporting", "Release Readiness"],
-    devops: ["CI/CD", "Monitoring", "Incident Resolution", "Reliability Metrics", "Runbooks", "Release Gates"],
-    product: ["Backlog", "Sprint Goals", "Acceptance Criteria", "Release Notes", "KPI Reviews"],
-    quality: ["Test Strategy", "Defect Triage", "UAT Evidence", "Release Validation", "Quality Metrics"],
-    data: ["Data Mapping", "Dashboards", "Reporting", "Data Validation", "KPI Definitions"],
-    delivery: ["Delivery Plan", "Risk Register", "Release Plan", "Status Reporting", "SLA Dashboard"],
-    technical: ["APIs", "Database Optimization", "Performance Tuning", "Integration Contracts", "Code Reviews", "Release Validation"]
-  };
-  const direct = roleArtifacts(roleTrack).filter((artifact) => allowedText.includes(normalize(artifact)));
-  const safeGeneric = ["Stakeholder Management", "Process Improvement", "Data Validation", "Reporting", "Release Readiness", "Release Validation", "Quality Metrics", "Status Reporting", "Risk Register"];
-  if (roleTrack === "workday" && !hasWorkdayEvidence) {
-    return ["Stakeholder Management", "Process Mapping", "Data Validation", "Reporting", "Release Readiness"];
-  }
-  if (roleTrack === "devops" && !hasDevopsEvidence) {
-    return ["Release Management", "Incident Management", "Monitoring", "SLA Dashboard", "Governance"];
-  }
-  const transferable = (fallback[roleTrack] || fallback.technical).filter((artifact) => {
-    const category = skillCategory(artifact);
-    return allowedText.includes(normalize(artifact)) ||
-      safeGeneric.includes(artifact) ||
-      (category && allowed.some((term) => skillCategory(term) === category));
+function buildRoleIntelligenceModel(resumeContext, jobKeywordGroups, groupedSkills) {
+  const jdRequirements = extractJDRequirements(resumeContext.jobDescription, resumeContext.targetJobTitle);
+  const supportedSkills = flattenGroupedSkills(groupedSkills);
+  const supportedText = normalize([
+    resumeContext.candidateProfileText,
+    ...supportedSkills
+  ].join(" "));
+  const seniority = careerLevel(Number(resumeContext.yearsOfExperience), 0, Math.max(1, resumeContext.projects.length));
+  const base = buildJDDrivenRoleModel(resumeContext, jobKeywordGroups, supportedSkills, jdRequirements);
+  const jdTerms = unique([
+    ...jobKeywordGroups.requiredSkills,
+    ...jobKeywordGroups.preferredSkills,
+    ...jobKeywordGroups.technicalKeywords,
+    ...jobKeywordGroups.toolsPlatformsMethodologies,
+    ...jobKeywordGroups.businessKeywords,
+    ...jobKeywordGroups.softSkills,
+    ...jobKeywordGroups.domainKeywords
+  ]);
+  const supportedJdTerms = jdTerms.filter((term) => {
+    const text = normalize(term);
+    return supportedText.includes(text) ||
+      (resumeContext.skillClassification?.existing || []).some((skill) => normalize(skill) === text) ||
+      (resumeContext.skillClassification?.transferable || []).some((skill) => normalize(skill) === text);
   });
-  const result = unique([...direct, ...transferable]).slice(0, 8);
-  return result.length ? result : ["Stakeholder Management", "Process Improvement", "Data Validation", "Reporting", "Release Readiness"];
+
+  return {
+    roleTrack: base.roleTrack,
+    roleFamily: base.roleFamily,
+    jdRequirements,
+    seniority,
+    responsibilityModel: unique([...base.responsibilities, ...supportedJdTerms.filter((term) => !skillCategory(term))]),
+    requiredSkillsModel: unique([...base.methods, ...supportedSkills, ...supportedJdTerms.filter((term) => skillCategory(term))]),
+    recruiterExpectationModel: base.recruiterExpectations,
+    atsKeywordModel: supportedJdTerms,
+    actionsBySeniority: base.actionsBySeniority,
+    artifacts: base.artifacts,
+    methods: unique([...base.methods, ...supportedSkills]).filter((term) => supportedText.includes(normalize(term)) || !skillCategory(term)),
+    problems: base.problems,
+    outcomes: base.outcomes,
+    engineeringStyle: base.engineeringStyle,
+    forbiddenTerms: unique([...(base.forbiddenTerms || []), ...contaminationTerms(base.roleTrack)])
+      .filter((term) => !supportedText.includes(normalize(term))),
+    genericRejectPatterns: [
+      /Partnered with stakeholders to align/i,
+      /Created domain-specific coverage/i,
+      /Converted root-cause findings/i,
+      /Strengthened collaboration/i,
+      /Improved visibility/i,
+      /Delivery grounded in business needs/i,
+      /turning .* into traceable/i,
+      /role alignment through transferable experience/i,
+      /governed cloud readiness through scrum/i,
+      /applies .*css/i
+    ]
+  };
 }
 
-function authenticRoleActions(roleTrack, maturity, classification = {}) {
-  const allowedText = normalize([...(classification.existing || []), ...(classification.transferable || [])].join(" "));
-  const hasWorkdayEvidence = /workday|hcm|tenant|payroll|calculated fields|eib|security groups/.test(allowedText);
-  const hasDevopsEvidence = /ci\/cd|docker|kubernetes|terraform|jenkins|azure devops|github actions|monitoring|incident management/.test(allowedText);
-  if (roleTrack === "workday" && !hasWorkdayEvidence) {
-    return roleActions("businessAnalysis", maturity);
-  }
-  if (roleTrack === "devops" && !hasDevopsEvidence) {
-    return roleActions("delivery", maturity);
-  }
-  return roleActions(roleTrack, maturity);
+function buildJDDrivenRoleModel(resumeContext, jobKeywordGroups, supportedSkills, jdRequirements) {
+  const title = cleanRoleTitle(resumeContext.targetJobTitle);
+  const roleFamily = ({
+    platformEngineering: "Platform / DevOps Engineering",
+    backendPlatformEngineering: "Backend Platform Engineering"
+  }[jdRequirements.roleFamily]) ||
+    (jdRequirements.devopsSignals || jdRequirements.sreSignals ? "DevOps / Platform Engineering" :
+      jdRequirements.backendSignals ? "Backend / API Engineering" :
+        jdRequirements.frontendSignals ? "Frontend Engineering" :
+          jdRequirements.cmsSignals ? "CMS Engineering" :
+            `${title} Delivery`);
+  const roleTrack = "jdDriven";
+  const supportedText = normalize([
+    resumeContext.candidateProfileText,
+    ...supportedSkills
+  ].join(" "));
+  const jdRequiredSkillBuckets = [
+    ...jdRequirements.requiredProgrammingLanguages,
+    ...jdRequirements.backendApiRequirements,
+    ...jdRequirements.cloudPlatformRequirements,
+    ...jdRequirements.devopsSreRequirements,
+    ...jdRequirements.observabilityRequirements,
+    ...jdRequirements.cicdRequirements,
+    ...jdRequirements.developerToolingRequirements,
+    ...jdRequirements.securityArchitectureRequirements
+  ];
+  const supportedJDTerms = unique(jdRequiredSkillBuckets)
+    .filter((term) => supportedText.includes(normalize(term)));
+  const supportedMethodTerms = unique([
+    ...supportedJDTerms,
+    ...supportedSkills.filter((skill) => {
+      const category = skillCategory(skill);
+      return category && !["CMS Authoring and Presentation", "Healthcare Domain", "Logistics Domain", "Telecom Domain"].includes(category);
+    })
+  ]);
+  const responsibilities = jdResponsibilitiesFromRequirements(jdRequirements, resumeContext.jobDescription);
+  const artifacts = jdArtifactsFromRequirements(jdRequirements, supportedMethodTerms);
+  const problems = jdProblemsFromRequirements(jdRequirements);
+  const outcomes = jdOutcomesFromRequirements(jdRequirements);
+
+  return {
+    roleTrack,
+    roleFamily,
+    responsibilities,
+    methods: supportedMethodTerms.length ? supportedMethodTerms : supportedSkills.slice(0, 8),
+    artifacts,
+    problems,
+    outcomes,
+    recruiterExpectations: unique([
+      ...responsibilities,
+      ...supportedJDTerms,
+      ...jobKeywordGroups.softSkills
+    ]).slice(0, 12),
+    actionsBySeniority: {
+      early: ["Implemented", "Configured", "Validated", "Supported", "Documented", "Troubleshot"],
+      mid: ["Built", "Automated", "Integrated", "Optimized", "Owned", "Resolved"],
+      senior: ["Designed", "Led", "Standardized", "Improved", "Guided", "Reduced"],
+      lead: ["Established", "Directed", "Architected", "Mentored", "Prioritized", "Scaled"]
+    },
+    engineeringStyle: jdRequirements.backendSignals || jdRequirements.devopsSignals || jdRequirements.sreSignals || jdRequirements.platformSignals,
+    forbiddenTerms: unsupportedJDTerms(jdRequiredSkillBuckets, supportedText)
+  };
+}
+
+function unsupportedJDTerms(jdTerms, supportedText) {
+  return unique(jdTerms).filter((term) => !supportedText.includes(normalize(term)));
+}
+
+function jdResponsibilitiesFromRequirements(jdRequirements, jobDescription) {
+  const text = normalize(jobDescription);
+  const responsibilities = [];
+  if (jdRequirements.backendSignals) responsibilities.push("backend/API delivery", "service integration", "system reliability");
+  if (jdRequirements.platformSignals) responsibilities.push("platform automation", "developer workflow improvement", "internal platform enablement");
+  if (jdRequirements.devopsSignals) responsibilities.push("deployment automation", "pipeline improvement", "environment consistency");
+  if (jdRequirements.sreSignals) responsibilities.push("operational reliability", "incident response", "monitoring improvement");
+  if (jdRequirements.observabilityRequirements.length) responsibilities.push("observability coverage", "logging and metrics improvement");
+  if (jdRequirements.securityArchitectureRequirements.length) responsibilities.push("secure architecture support", "access and control validation");
+  if (/requirement|user stor|process|uat|stakeholder/.test(text)) responsibilities.push("requirements clarification", "stakeholder validation", "delivery readiness");
+  return unique(responsibilities.length ? responsibilities : ["role-specific delivery", "project execution", "quality improvement"]);
+}
+
+function jdArtifactsFromRequirements(jdRequirements, supportedMethods) {
+  const artifacts = [];
+  if (jdRequirements.backendApiRequirements.length) artifacts.push("API contracts", "service integrations", "technical change notes");
+  if (jdRequirements.devopsSignals) artifacts.push("deployment notes", "automation scripts", "environment checks");
+  if (jdRequirements.cicdRequirements.length) artifacts.push("pipeline updates", "build validation evidence");
+  if (jdRequirements.observabilityRequirements.length) artifacts.push("monitoring dashboards", "logging evidence", "metrics reviews");
+  if (jdRequirements.developerToolingRequirements.length) artifacts.push("developer workflow documentation", "self-service process notes");
+  return unique([...artifacts, ...supportedMethods.slice(0, 4)]).slice(0, 10);
+}
+
+function jdProblemsFromRequirements(jdRequirements) {
+  const problems = [];
+  if (jdRequirements.backendSignals) problems.push("integration failures", "API handoff gaps", "service defects");
+  if (jdRequirements.devopsSignals) problems.push("deployment inconsistency", "manual release effort", "environment drift");
+  if (jdRequirements.sreSignals) problems.push("slow incident triage", "reliability gaps", "monitoring blind spots");
+  if (jdRequirements.platformSignals) problems.push("manual onboarding", "developer workflow friction", "platform support delays");
+  return unique(problems.length ? problems : ["delivery gaps", "manual effort", "quality issues"]);
+}
+
+function jdOutcomesFromRequirements(jdRequirements) {
+  const outcomes = [];
+  if (jdRequirements.backendSignals) outcomes.push("improved service integration quality by 25%", "reduced API-related rework by 22%");
+  if (jdRequirements.devopsSignals) outcomes.push("improved deployment consistency by 28%", "reduced manual release effort by 20 hours per month");
+  if (jdRequirements.sreSignals) outcomes.push("cut incident triage time by 30%", "improved operational reliability by 24%");
+  if (jdRequirements.platformSignals) outcomes.push("reduced onboarding effort by 30%", "improved developer workflow consistency by 26%");
+  return unique(outcomes.length ? outcomes : ["improved delivery quality by 25%", "reduced rework by 20%"]);
+}
+
+function roleResponsibilityModel(roleTrack, targetJobTitle, supportedSkills = [], jdRequirements = {}) {
+  const title = normalize(targetJobTitle);
+  const supported = normalize(supportedSkills.join(" "));
+  const technicalMethods = /sitecore|sxa|helix|content editor|experience editor/.test(`${title} ${supported}`)
+    ? ["Sitecore", "SXA", "Helix", "Renderings", "Templates", "Content Editor", "Experience Editor", "REST APIs", "SQL Server", "Solr"]
+    : ["APIs", "REST APIs", "SQL", "Database Optimization", "Integration Contracts", "Performance Tuning", "Code Reviews"];
+  const platformMethods = unique([
+    ...["Java", "Python", "Go", "REST APIs", "Microservices", "Spring Boot", "Docker", "Kubernetes", "AWS", "GCP", "Jenkins", "GitHub Actions", "CI/CD", "Terraform", "Prometheus", "Grafana", "Splunk", "Datadog", "Logging", "Metrics", "Tracing", "Developer Tools", "Platform Automation"],
+    ...(jdRequirements.requiredProgrammingLanguages || []),
+    ...(jdRequirements.backendApiRequirements || []),
+    ...(jdRequirements.cloudPlatformRequirements || []),
+    ...(jdRequirements.devopsSreRequirements || []),
+    ...(jdRequirements.observabilityRequirements || []),
+    ...(jdRequirements.cicdRequirements || []),
+    ...(jdRequirements.developerToolingRequirements || [])
+  ]);
+  const map = {
+    platformEngineering: {
+      roleFamily: "Platform Engineering",
+      responsibilities: ["platform API development", "backend service enablement", "developer tooling", "CI/CD automation", "container orchestration", "observability instrumentation", "SRE incident response", "platform reliability improvement"],
+      methods: platformMethods,
+      artifacts: ["platform APIs", "service integrations", "deployment pipelines", "Kubernetes manifests", "Terraform modules", "observability dashboards", "logging and metrics instrumentation", "runbooks", "developer tooling workflows"],
+      problems: ["manual service onboarding", "inconsistent deployments", "limited observability", "slow incident triage", "pipeline bottlenecks", "platform reliability gaps", "integration failures"],
+      outcomes: ["reduced manual onboarding effort by 30%", "improved deployment consistency by 28%", "cut incident triage time by 35%", "improved platform reliability by 25%", "reduced pipeline failures by 24%", "increased service observability coverage by 32%"],
+      recruiterExpectations: ["backend API ownership", "platform automation", "container orchestration", "CI/CD delivery", "observability", "SRE practices", "developer experience"]
+    },
+    backendEngineering: {
+      roleFamily: "Backend Engineering",
+      responsibilities: ["backend service development", "API implementation", "database interaction", "system integration", "performance tuning", "CI/CD support", "production defect resolution"],
+      methods: ["Go", "Golang", "REST APIs", "Microservices", "SQL", "PostgreSQL", "Docker", "Kubernetes", "CI/CD", "Git"],
+      artifacts: ["API contracts", "service handlers", "database queries", "integration logs", "code reviews", "deployment notes"],
+      problems: ["slow API response", "integration failures", "data consistency gaps", "release defects", "service reliability issues"],
+      outcomes: ["reduced API response time", "improved service reliability", "lowered defect leakage", "improved deployment readiness"],
+      recruiterExpectations: ["backend code ownership", "API design", "database usage", "production troubleshooting", "performance awareness"]
+    },
+    scrumMaster: {
+      roleFamily: "Agile Delivery",
+      responsibilities: ["sprint planning", "daily standup facilitation", "retrospective actions", "dependency management", "impediment removal", "PI planning support", "delivery risk tracking"],
+      methods: ["Jira", "Scrum", "Kanban", "SAFe", "Sprint Planning", "Retrospectives", "Dependency Tracker", "Risk Register"],
+      artifacts: ["Jira boards", "burndown trends", "risk register", "dependency tracker", "retrospective action items", "PI planning notes"],
+      problems: ["blocked stories", "capacity conflicts", "dependency delays", "scope churn", "missed commitments"],
+      outcomes: ["improved sprint predictability", "reduced delivery blockers", "improved commitment reliability", "reduced dependency delays"],
+      recruiterExpectations: ["ceremony facilitation", "team coaching", "blocker resolution", "agile metrics", "delivery governance"]
+    },
+    businessAnalysis: {
+      roleFamily: "Business Analysis",
+      responsibilities: ["requirements elicitation", "process analysis", "user story refinement", "acceptance criteria definition", "UAT coordination", "data validation"],
+      methods: ["BRD", "FRD", "User Stories", "Acceptance Criteria", "Process Flows", "UAT", "Jira", "Confluence"],
+      artifacts: ["requirements traceability", "process flows", "UAT sign-off", "acceptance criteria", "gap analysis notes"],
+      problems: ["unclear requirements", "workflow gaps", "UAT defects", "reporting mismatches", "stakeholder ambiguity"],
+      outcomes: ["reduced requirement rework", "improved UAT pass rate", "reduced clarification cycles", "improved reporting accuracy"],
+      recruiterExpectations: ["stakeholder workshops", "functional documentation", "requirements ownership", "UAT readiness"]
+    },
+    quality: {
+      roleFamily: "Quality Engineering",
+      responsibilities: ["test automation", "framework development", "test execution", "defect analysis", "browser validation", "CI/CD test integration"],
+      methods: ["Selenium", "Cypress", "Jest", "JUnit", "Postman", "Test Strategy", "Regression Suite", "CI/CD"],
+      artifacts: ["automation scripts", "test cases", "defect reports", "regression results", "browser evidence"],
+      problems: ["regression gaps", "escaped defects", "unstable automation", "browser defects", "release risk"],
+      outcomes: ["reduced escaped defects", "improved regression coverage", "cut test-cycle effort", "improved automation stability"],
+      recruiterExpectations: ["automation ownership", "defect triage", "release validation", "framework maintenance"]
+    },
+    devops: {
+      roleFamily: "DevOps Engineering",
+      responsibilities: ["CI/CD pipeline management", "infrastructure automation", "container deployment", "monitoring", "incident response", "cloud operations"],
+      methods: ["Docker", "Kubernetes", "Terraform", "Jenkins", "GitHub Actions", "Azure DevOps", "AWS", "Monitoring", "Runbooks"],
+      artifacts: ["pipeline configuration", "deployment runbooks", "monitoring dashboards", "incident notes", "infrastructure modules"],
+      problems: ["deployment failures", "environment drift", "incident response delays", "manual release effort", "monitoring gaps"],
+      outcomes: ["reduced rollback risk", "improved SLA compliance", "cut incident response time", "reduced manual release effort"],
+      recruiterExpectations: ["automation", "cloud operations", "pipeline ownership", "reliability metrics"]
+    },
+    workday: {
+      roleFamily: "Workday Consulting",
+      responsibilities: ["business process configuration", "tenant testing", "security validation", "report validation", "HRIS release readiness"],
+      methods: ["Workday HCM", "Business Process Configuration", "Custom Reports", "Calculated Fields", "Tenant Testing", "Security Groups"],
+      artifacts: ["configuration workbooks", "tenant test evidence", "security review notes", "custom reports", "release checklist"],
+      problems: ["configuration rework", "tenant defects", "security exceptions", "report mismatches", "release readiness gaps"],
+      outcomes: ["reduced configuration rework", "improved tenant testing pass rate", "reduced security access exceptions", "improved release readiness"],
+      recruiterExpectations: ["Workday process knowledge", "tenant validation", "reporting", "HR stakeholder support"]
+    },
+    product: {
+      roleFamily: "Product Management",
+      responsibilities: ["backlog prioritization", "roadmap planning", "release scope definition", "user feedback analysis", "KPI review"],
+      methods: ["Product Roadmap", "Backlog", "Sprint Goals", "Acceptance Criteria", "KPI Reviews", "Prioritization Matrix"],
+      artifacts: ["roadmap", "release notes", "acceptance criteria", "user feedback", "KPI dashboards"],
+      problems: ["backlog aging", "scope churn", "unclear priorities", "feature adoption gaps", "release tradeoffs"],
+      outcomes: ["improved sprint predictability", "reduced backlog aging", "increased feature acceptance", "cut release-scope churn"],
+      recruiterExpectations: ["prioritization", "stakeholder alignment", "release planning", "outcome tracking"]
+    },
+    data: {
+      roleFamily: "Data and Analytics",
+      responsibilities: ["data mapping", "report development", "dashboard validation", "data quality checks", "KPI definition"],
+      methods: ["SQL", "Power BI", "Tableau", "Excel", "Dashboards", "Data Mapping", "Reporting"],
+      artifacts: ["source-to-target mapping", "dashboard reports", "reconciliation rules", "KPI definitions", "data validation notes"],
+      problems: ["reporting inaccuracy", "data quality gaps", "refresh delays", "manual reconciliation", "unclear KPI definitions"],
+      outcomes: ["improved reporting accuracy", "reduced reconciliation effort", "cut dashboard refresh delays", "improved data quality checks"],
+      recruiterExpectations: ["data validation", "reporting", "dashboard insight", "SQL usage"]
+    },
+    delivery: {
+      roleFamily: "Delivery Management",
+      responsibilities: ["delivery planning", "dependency tracking", "risk management", "release coordination", "status reporting"],
+      methods: ["Delivery Plan", "Risk Register", "Dependency Tracker", "Release Plan", "Status Reporting", "SLA Dashboard"],
+      artifacts: ["release plan", "risk register", "dependency tracker", "status report", "action log"],
+      problems: ["delivery blockers", "dependency delays", "status gaps", "release risk", "SLA misses"],
+      outcomes: ["improved SLA compliance", "reduced delivery blockers", "cut status-reporting effort", "improved release readiness"],
+      recruiterExpectations: ["governance", "dependency management", "release coordination", "risk tracking"]
+    },
+    technical: {
+      roleFamily: /sitecore/.test(`${title} ${supported}`) ? "Sitecore Development" : "Technical Delivery",
+      responsibilities: /sitecore/.test(`${title} ${supported}`)
+        ? ["Sitecore component development", "rendering and template updates", "content workflow configuration", "API integration", "Solr indexing", "defect resolution", "release validation"]
+        : ["application enhancement", "API integration", "database-backed workflow support", "defect resolution", "performance tuning", "release validation"],
+      methods: technicalMethods,
+      artifacts: /sitecore/.test(`${title} ${supported}`)
+        ? ["Sitecore renderings", "templates", "layouts", "datasources", "content workflows", "Solr indexes", "release notes"]
+        : ["technical design notes", "API contracts", "code reviews", "defect logs", "release notes"],
+      problems: /sitecore/.test(`${title} ${supported}`)
+        ? ["content authoring issues", "rendering defects", "template inconsistencies", "indexing gaps", "release defects"]
+        : ["application defects", "integration failures", "performance issues", "release defects", "support escalations"],
+      outcomes: ["improved release stability", "reduced defect resolution time", "cut manual support effort", "reduced response time"],
+      recruiterExpectations: ["hands-on implementation", "technical troubleshooting", "integration support", "release readiness"]
+    }
+  };
+  const model = map[roleTrack] || map.technical;
+  return {
+    actionsBySeniority: {
+      early: roleActions(roleTrack, "early"),
+      mid: roleActions(roleTrack, "mid"),
+      senior: roleActions(roleTrack, "senior"),
+      lead: roleActions(roleTrack, "lead")
+    },
+    ...model
+  };
 }
 
 function domainTerms(domain) {
@@ -1028,45 +1471,26 @@ function domainTerms(domain) {
   return ["business operations", "customer workflows", "operational data", "service delivery", "process controls"];
 }
 
-function domainProfile(domain) {
-  const text = normalize(domain);
-  if (/health|medical|care|pharma|cvs/.test(text)) {
-    return {
-      workflow: "claims adjudication, member services, patient data validation, and compliance intake",
-      stakeholders: "product owners, compliance analysts, care operations leads, QA, and release teams",
-      evidence: "claims exception reports, member-service workflow maps, audit notes, and UAT sign-off logs"
-    };
-  }
-  if (/logistics|supply|transport|inventory|operations|kinect/.test(text)) {
-    return {
-      workflow: "supply chain visibility, transportation planning, inventory movement, and operations support",
-      stakeholders: "operations managers, warehouse coordinators, product owners, QA, and integration teams",
-      evidence: "inventory reconciliation reports, transportation process flows, exception logs, and SLA dashboards"
-    };
-  }
-  if (/telecom|network|ericsson|cisco|connectivity/.test(text)) {
-    return {
-      workflow: "network operations, customer provisioning, connectivity assurance, and service recovery",
-      stakeholders: "network operations teams, provisioning leads, support managers, QA, and release coordinators",
-      evidence: "provisioning reports, incident trends, connectivity dashboards, and service assurance checklists"
-    };
-  }
-  if (/finance|bank|payment|insurance/.test(text)) {
-    return {
-      workflow: "transaction controls, account servicing, risk review, and regulatory reporting",
-      stakeholders: "operations leaders, risk analysts, finance product owners, QA, and release teams",
-      evidence: "reconciliation reports, risk-control logs, audit samples, and transaction dashboards"
-    };
-  }
-  return {
-    workflow: "customer workflows, operational data, service delivery, and process controls",
-    stakeholders: "business users, product owners, QA, DevOps, and delivery teams",
-    evidence: "workflow maps, validation notes, operational reports, and release readiness checklists"
-  };
-}
-
 function roleActions(roleTrack, maturity) {
   const map = {
+    platformEngineering: {
+      early: ["Implemented platform API changes", "Maintained CI/CD jobs", "Validated container deployments", "Added logging coverage", "Supported incident triage", "Documented runbooks"],
+      mid: ["Built platform services", "Automated deployment workflows", "Integrated observability signals", "Improved Kubernetes readiness", "Reduced pipeline failures", "Enhanced developer tooling"],
+      senior: ["Designed backend platform APIs", "Led CI/CD modernization", "Improved container orchestration", "Strengthened observability", "Resolved reliability gaps", "Guided SRE practices"],
+      lead: ["Directed platform architecture", "Established developer tooling standards", "Led reliability strategy", "Mentored platform engineers", "Owned platform automation roadmap", "Improved engineering productivity"]
+    },
+    backendEngineering: {
+      early: ["Implemented API handlers", "Validated database queries", "Supported service integrations", "Fixed backend defects", "Documented endpoint behavior", "Assisted deployment checks"],
+      mid: ["Owned API delivery", "Built backend services", "Optimized database access", "Integrated downstream systems", "Resolved production defects", "Improved CI/CD readiness"],
+      senior: ["Designed service contracts", "Led backend implementation", "Optimized service performance", "Guided code reviews", "Resolved complex integration issues", "Improved release reliability"],
+      lead: ["Directed backend architecture", "Established API standards", "Led performance strategy", "Mentored backend engineers", "Owned service reliability", "Guided cloud deployment patterns"]
+    },
+    scrumMaster: {
+      early: ["Tracked sprint tasks", "Coordinated daily standups", "Documented impediments", "Prepared retrospective actions", "Updated Jira boards", "Supported sprint planning"],
+      mid: ["Facilitated sprint planning", "Managed dependency tracking", "Removed delivery blockers", "Improved ceremony discipline", "Coached agile practices", "Tracked velocity trends"],
+      senior: ["Led agile delivery governance", "Resolved cross-team dependencies", "Improved PI planning readiness", "Guided teams through retrospectives", "Managed delivery risks", "Strengthened sprint predictability"],
+      lead: ["Directed agile operating model", "Established delivery governance", "Mentored Scrum Masters", "Aligned program-level dependencies", "Owned agile metrics", "Improved portfolio delivery cadence"]
+    },
     businessAnalysis: {
       early: ["Documented requirements", "Mapped workflows", "Validated user stories", "Supported UAT", "Analyzed defects", "Coordinated clarifications"],
       mid: ["Owned requirements analysis", "Facilitated workshops", "Refined acceptance criteria", "Optimized process flows", "Aligned stakeholders", "Validated release scope"],
@@ -1082,8 +1506,8 @@ function roleActions(roleTrack, maturity) {
     devops: {
       early: ["Supported deployments", "Monitored environments", "Automated routine tasks", "Validated configurations", "Triaged incidents", "Documented runbooks"],
       mid: ["Owned CI/CD improvements", "Automated deployment workflows", "Optimized monitoring", "Improved release reliability", "Standardized environment controls", "Resolved operational issues"],
-      senior: ["Designed automation strategy", "Led pipeline modernization", "Strengthened observability", "Improved incident response", "Governed cloud readiness", "Reduced deployment risk"],
-      lead: ["Led DevOps operating model", "Directed platform reliability", "Established governance standards", "Mentored engineers", "Aligned automation roadmap", "Owned production resilience"]
+      senior: ["Designed automation strategy", "Led pipeline modernization", "Strengthened observability", "Improved incident response", "Improved cloud readiness", "Reduced deployment risk"],
+      lead: ["Led DevOps operating model", "Directed platform reliability", "Established automation standards", "Mentored engineers", "Aligned automation roadmap", "Owned production resilience"]
     },
     product: {
       early: ["Supported backlog grooming", "Documented feature needs", "Tracked sprint priorities", "Validated user feedback", "Coordinated acceptance checks", "Prepared release notes"],
@@ -1122,6 +1546,9 @@ function roleActions(roleTrack, maturity) {
 
 function roleArtifacts(roleTrack) {
   const map = {
+    platformEngineering: ["Platform APIs", "Backend Services", "Microservices", "Spring Boot", "Docker", "Kubernetes", "GCP", "AWS", "CI/CD", "Terraform", "Observability", "Logging", "Metrics", "Tracing", "Prometheus", "Grafana", "Splunk", "Datadog", "Runbooks", "Developer Tools"],
+    backendEngineering: ["APIs", "Microservices", "Database Optimization", "Performance Tuning", "Integration Contracts", "Code Reviews", "CI/CD", "Production Support"],
+    scrumMaster: ["Sprint Planning", "Daily Standups", "Retrospectives", "PI Planning", "Dependency Tracker", "Risk Register", "Jira Board", "Velocity Metrics"],
     businessAnalysis: ["BRD", "FRD", "User Stories", "Acceptance Criteria", "UAT", "Process Flows", "Data Validation", "Root Cause Analysis", "Reporting"],
     workday: ["Workday HCM", "Business Process Configuration", "Calculated Fields", "Custom Reports", "EIB", "Tenant Testing", "Security Groups", "Workday Recruiting", "Payroll Validation"],
     devops: ["CI/CD", "Infrastructure Automation", "Monitoring", "Incident Resolution", "Reliability Metrics", "Runbooks", "Release Gates", "Deployment Checklists"],
@@ -1136,6 +1563,30 @@ function roleArtifacts(roleTrack) {
 
 function metricBank(roleTrack) {
   const map = {
+    platformEngineering: [
+      "reduced manual onboarding effort by 30%",
+      "improved deployment consistency by 28%",
+      "cut incident triage time by 35%",
+      "increased observability coverage by 32%",
+      "reduced pipeline failures by 24%",
+      "improved platform reliability by 25%"
+    ],
+    backendEngineering: [
+      "reduced API response time by 30%",
+      "improved service reliability from 91% to 98%",
+      "cut backend defect turnaround by 35%",
+      "reduced database query latency by 28%",
+      "improved deployment readiness by 26%",
+      "reduced integration failures by 24%"
+    ],
+    scrumMaster: [
+      "improved sprint commitment reliability by 24%",
+      "reduced delivery blockers by 30%",
+      "cut dependency delays by 25%",
+      "improved team velocity predictability by 22%",
+      "reduced carryover stories by 28%",
+      "improved PI planning readiness by 27%"
+    ],
     businessAnalysis: [
       "reduced requirement rework by 28%",
       "improved UAT pass rate from 86% to 96%",
@@ -1204,86 +1655,6 @@ function metricBank(roleTrack) {
   return map[roleTrack] || map.technical;
 }
 
-function rotatedItems(items, index, count) {
-  if (!items.length) return [];
-  return Array.from({ length: count }, (_, offset) => items[(index + offset) % items.length]);
-}
-
-function variant(items, index) {
-  return items[index % items.length];
-}
-
-function projectNarrativeFocus(project, index, maturity) {
-  const terms = domainTerms(project.domain);
-  const focusByMaturity = {
-    early: ["execution support", "requirement clarity", "hands-on validation", "team follow-through"],
-    mid: ["workflow ownership", "cross-functional coordination", "process optimization", "delivery predictability"],
-    senior: ["stakeholder decisioning", "release confidence", "risk reduction", "business outcome alignment"],
-    lead: ["strategic direction", "governance", "mentoring", "operating model improvement"]
-  };
-  const pool = focusByMaturity[maturity] || focusByMaturity.early;
-  return {
-    primary: pool[index % pool.length],
-    secondary: pool[(index + 1) % pool.length],
-    domain: terms[index % terms.length],
-    outcome: terms[(index + 2) % terms.length]
-  };
-}
-
-function stakeholderBullet({ project, role, profile, artifacts, index }) {
-  return variant([
-    () => `Partnered with ${profile.stakeholders} at ${project.clientName} to align ${role} decisions with ${profile.workflow}, using ${artifacts[0]} and ${artifacts[1]} to keep delivery grounded in real business needs.`,
-    () => `At ${project.clientName}, translated stakeholder priorities from ${profile.stakeholders} into ${artifacts[0]}, ${artifacts[1]}, and delivery-ready decisions for ${profile.workflow}.`,
-    () => `Facilitated working sessions with ${profile.stakeholders}, turning competing priorities at ${project.clientName} into a shared execution path for ${profile.workflow}.`,
-    () => `Built stakeholder confidence for ${project.clientName} by clarifying scope, risks, and decisions across ${profile.stakeholders} before release commitments were finalized.`
-  ], index)();
-}
-
-function processBullet({ actions, terms, profile, metrics, index }) {
-  return variant([
-    () => `${actions[1]} for ${terms[0]} and ${terms[1]} workflows, turning gaps found in ${profile.evidence} into process changes that ${metrics[0]}.`,
-    () => `Improved the handoff between ${terms[0]} intake and ${terms[1]} validation by standardizing review checkpoints, which ${metrics[0]}.`,
-    () => `${actions[4]} across ${profile.evidence}, then converted recurring blockers into process-flow updates that ${metrics[0]}.`,
-    () => `Streamlined ${terms[0]} review routines by replacing ad hoc follow-ups with artifact-driven checkpoints, helping ${metrics[0]}.`
-  ], index)();
-}
-
-function domainBullet({ project, artifacts, terms, focus, index }) {
-  return variant([
-    () => `Created domain-specific coverage for ${focus.domain} scenarios by connecting ${artifacts[2]}, ${terms[2]}, and ${focus.primary} so the project reflected how ${project.domain || "the business"} teams actually operated.`,
-    () => `Mapped ${terms[2]} scenarios to ${artifacts[2]} and ${artifacts[3]}, giving ${project.domain || "business"} users clearer visibility into ${focus.domain} exceptions.`,
-    () => `Grounded project decisions in ${project.domain || "business"} operations by validating ${focus.domain}, ${terms[2]}, and ${terms[3]} impacts before sprint scope was accepted.`,
-    () => `Turned ${project.domain || "domain"} context into practical delivery guidance by documenting how ${focus.domain} issues affected ${terms[2]} and downstream ${terms[3]} controls.`
-  ], index)();
-}
-
-function executionBullet({ actions, skillPhrase, cloud, metrics, index }) {
-  return variant([
-    () => `${actions[3]} using ${skillPhrase}${cloud ? ` in ${cloud}` : ""}, improving traceability from intake through release validation and helping ${metrics[1]}.`,
-    () => `${actions[0]} with ${skillPhrase}${cloud ? ` across ${cloud}` : ""}, linking execution details to release evidence and helping ${metrics[1]}.`,
-    () => `Applied ${skillPhrase} to move work from analysis into production-ready execution, strengthening validation discipline and helping ${metrics[1]}.`,
-    () => `${actions[2]} through ${skillPhrase}${cloud ? ` on ${cloud}` : ""}, keeping business execution, quality checks, and release outcomes connected while helping ${metrics[1]}.`
-  ], index)();
-}
-
-function improvementBullet({ terms, focus, index }) {
-  return variant([
-    () => `Converted root-cause findings, stakeholder feedback, and operational data into prioritized improvements for ${focus.outcome}, reducing repeated clarifications while protecting delivery quality.`,
-    () => `Analyzed recurring defects and operational friction in ${terms[3]} workflows, then prioritized improvements that made ${focus.outcome} easier to validate.`,
-    () => `Used feedback loops from QA, business users, and support teams to isolate root causes behind ${focus.outcome} issues and prevent repeat defects in later releases.`,
-    () => `Reviewed process gaps affecting ${focus.outcome}, separated true defects from training or data issues, and converted the findings into clearer release actions.`
-  ], index)();
-}
-
-function readinessBullet({ actions, focus, artifacts, index }) {
-  return variant([
-    () => `${actions[5]} with a focus on ${focus.secondary}, documenting decisions, risks, and readiness checkpoints so future releases could move without recreating the same analysis.`,
-    () => `Maintained ${artifacts[0]} updates, decision notes, and readiness checkpoints so teams could reuse context instead of rediscovering prior analysis during each sprint.`,
-    () => `${actions[5]} by capturing assumptions, risks, and validation evidence in plain business language that helped new team members understand ${focus.secondary}.`,
-    () => `Closed each release cycle with practical documentation, open-risk notes, and lessons learned, making ${focus.secondary} visible to delivery and support teams.`
-  ], index)();
-}
-
 function flattenGroupedSkills(groupedSkills) {
   return unique(Object.values(groupedSkills).flat());
 }
@@ -1298,6 +1669,7 @@ function sentencesFrom(text) {
 
 function detectJobKeywordGroups(jobDescription) {
   const text = normalize(jobDescription);
+  const structuredRequirements = extractJDRequirements(jobDescription);
   const grouped = {};
   for (const [category, skills] of Object.entries(skillBank)) {
     const matches = skills.filter((skill) => text.includes(skill.toLowerCase()));
@@ -1337,7 +1709,18 @@ function detectJobKeywordGroups(jobDescription) {
   ].filter(([needle]) => text.includes(needle)).map(([, label]) => label));
 
   return {
-    requiredSkills: unique(Object.values(grouped).flat()),
+    structuredRequirements,
+    requiredSkills: unique([
+      ...Object.values(grouped).flat(),
+      ...structuredRequirements.requiredProgrammingLanguages,
+      ...structuredRequirements.backendApiRequirements,
+      ...structuredRequirements.cloudPlatformRequirements,
+      ...structuredRequirements.devopsSreRequirements,
+      ...structuredRequirements.observabilityRequirements,
+      ...structuredRequirements.cicdRequirements,
+      ...structuredRequirements.developerToolingRequirements,
+      ...structuredRequirements.securityArchitectureRequirements
+    ]),
     preferredSkills: preferredKeywords(jobDescription),
     businessKeywords,
     technicalKeywords: unique([
@@ -1353,7 +1736,9 @@ function detectJobKeywordGroups(jobDescription) {
       ...(grouped["CI/CD Tools"] || []),
       ...(grouped["Testing Tools"] || []),
       ...(grouped["Monitoring Tools"] || []),
+      ...(grouped["Observability"] || []),
       ...(grouped["Version Control"] || []),
+      ...(grouped["Developer Platform Tools"] || []),
       ...(grouped["Methodologies"] || []),
       ...(grouped["Architecture Patterns"] || [])
     ]),
@@ -1457,11 +1842,20 @@ function scoreCoverage(items, text) {
 }
 
 function roleTerminology(roleTrack, classification = {}) {
-  return authenticRoleArtifacts(roleTrack, classification);
+  const safeTerms = unique([
+    ...(classification.resumeSafeTerms || []),
+    ...(classification.allowedTerms || []),
+    ...(classification.existing || []),
+    ...(classification.transferable || [])
+  ]);
+  return safeTerms.length ? safeTerms : roleArtifacts(roleTrack).slice(0, 6);
 }
 
 function contaminationTerms(roleTrack) {
   const forbidden = {
+    platformEngineering: ["CSS", "SCSS", "HTML", "Content Editor", "Experience Editor", "Sitecore Workflows", "HIPAA Awareness", "Compliance", "Governance Deck", "BRD", "FRD", "Payroll Validation", "Workday HCM"],
+    backendEngineering: ["BRD", "FRD", "Workday HCM", "Payroll Validation", "Product Roadmap", "Sprint ceremonies", "Retrospectives"],
+    scrumMaster: ["Spring Boot", "Microservices", "Kafka", "Database Optimization", "Selenium", "Workday Studio", "Sitecore Renderings"],
     businessAnalysis: ["Spring Boot", "Microservices", "Kafka", "Kubernetes", "Terraform", "Workday Studio", "Workday EIB", "Java APIs"],
     workday: ["Spring Boot", "Microservices", "Java APIs", "Kafka", "Sitecore", "Coveo", "SXA", "Kubernetes"],
     devops: ["BRD", "FRD", "Workday HCM", "Calculated Fields", "Payroll Validation", "User Stories"],
@@ -1488,7 +1882,13 @@ function bulletSimilarity(left, right) {
     "stakeholder", "stakeholders", "process", "workflow", "workflows", "delivery",
     "readiness", "evidence", "requirements", "business", "technical", "improved",
     "improving", "helping", "teams", "review", "reviews", "decision", "decisions",
-    "support", "supported", "needs", "across", "through", "before", "after"
+    "support", "supported", "needs", "across", "through", "before", "after",
+    "address", "addressed", "isolated", "earlier", "cycles", "checks", "handoff",
+    "limiting", "traceable", "actions", "execution", "specific", "role", "using",
+    "reduced", "cut", "lowered", "increased", "service", "services", "planning",
+    "management", "tracking", "defects", "issues", "gaps", "platform", "deployment",
+    "integration", "integrations", "internal", "shared", "backend", "manual",
+    "onboarding", "consistency", "reliability", "productivity"
   ];
   const tokens = (text) => unique(normalize(text).match(/[a-z0-9]+/g) || [])
     .filter((token) => token.length > 3 && !commonResumeTokens.includes(token));
@@ -1544,115 +1944,229 @@ ${project.bullets.join("\n")}`;
 }
 
 function projectSpecificBullet(project, resumeContext, groupedSkills, bulletIndex, attempt) {
-  const roleTrack = inferRoleTrack(resumeContext.targetJobTitle);
   const projectIndex = Number(project.sequence || 0);
   const maturity = careerLevel(Number(resumeContext.yearsOfExperience), projectIndex, resumeContext.projects.length);
-  const actions = maturityActionSet(maturity);
-  const artifacts = rotatedItems(authenticRoleArtifacts(roleTrack, resumeContext.skillClassification), projectIndex + bulletIndex + attempt, 4);
-  const metrics = rotatedItems(metricBank(roleTrack), (projectIndex * 2) + bulletIndex + attempt, 2);
+  return roleControlledBullet(project, maturity, groupedSkills, resumeContext, {}, bulletIndex, attempt);
+}
+
+function roleModelForContext(resumeContext) {
+  return resumeContext.roleIntelligence || roleResponsibilityModel(inferRoleTrack(resumeContext.targetJobTitle), resumeContext.targetJobTitle, resumeContext.skills || []);
+}
+
+function roleModelPick(items, index, fallback) {
+  return items?.length ? items[index % items.length] : fallback;
+}
+
+function roleControlledBullet(project, level, groupedSkills, resumeContext, jobKeywordGroups, bulletIndex, attempt = 0) {
+  const roleModel = roleModelForContext(resumeContext);
+  const index = Number(project.sequence || 0);
+  const cursor = index + bulletIndex + attempt;
+  const evidenceText = normalize([
+    resumeContext.candidateProfileText,
+    ...(resumeContext.skills || []),
+    ...(resumeContext.skillClassification?.existing || [])
+  ].join(" "));
+  const missingSkillTerms = unique(resumeContext.skillClassification?.missing || [])
+    .map((skill) => normalize(skill));
+  const supportedRoleItem = (item) => {
+    const value = normalize(item);
+    if (missingSkillTerms.some((missing) => value.includes(missing))) return false;
+    if (/governance|compliance/.test(value) && roleModel.engineeringStyle) return false;
+    return !missingSkillTerms.some((missing) => value.includes(missing)) &&
+      (!skillCategory(item) || evidenceText.includes(value));
+  };
+  const actions = (roleModel.actionsBySeniority?.[level] || roleActions(roleModel.roleTrack || inferRoleTrack(resumeContext.targetJobTitle), level))
+    .filter(supportedRoleItem);
+  const action = roleModelPick(actions, cursor, "Delivered");
+  const supportedResponsibilities = unique(roleModel.responsibilityModel || roleModel.responsibilities || []).filter(supportedRoleItem);
+  const responsibility = roleModelPick(supportedResponsibilities, cursor, "platform service improvement");
+  const actionVerb = action.split(" ")[0];
+  const actionObject = action.split(" ").slice(1).join(" ") || responsibility;
+  const supportedMethods = unique([
+    ...(roleModel.methods || []),
+    ...flattenGroupedSkills(groupedSkills),
+    ...(roleModel.atsKeywordModel || [])
+  ]).filter((method) => (
+    !roleModel.forbiddenTerms?.some((blocked) => normalize(blocked) === normalize(method)) &&
+    supportedRoleItem(method) &&
+    !(roleModel.engineeringStyle && ["Agile", "Scrum", "SDLC", "Kanban", "Collaboration", "Communication", "Leadership", "Ownership", "Problem Solving", "Agile Collaboration"].includes(method))
+  ));
+  const supportedArtifacts = unique(roleModel.artifacts || []).filter(supportedRoleItem);
+  const method = roleModelPick(supportedMethods, cursor + 2, roleModelPick(supportedArtifacts, cursor, "role-specific artifacts"));
+  const artifact = roleModelPick(supportedArtifacts, cursor + 1, method);
+  const supportedProblems = unique(roleModel.problems || []).filter(supportedRoleItem);
+  const supportedOutcomes = unique(roleModel.outcomes || []).filter(supportedRoleItem);
+  const problem = roleModelPick(supportedProblems, cursor + 3, "platform delivery gaps");
+  const outcome = roleModelPick(supportedOutcomes, cursor + 4, roleModelPick(metricBank(roleModel.roleTrack || inferRoleTrack(resumeContext.targetJobTitle)), cursor, "improved delivery quality"));
   const terms = domainTerms(project.domain);
-  const profile = domainProfile(project.domain);
-  const skills = rotatedItems(flattenGroupedSkills(groupedSkills), projectIndex + bulletIndex + attempt, 3);
-  const skillPhrase = skills.length ? skills.join(", ") : "target-role practices";
-  const role = project.role || resolveProjectRole(project, resumeContext.yearsOfExperience, projectIndex, resumeContext.targetJobTitle);
-  const domain = project.domain || "business operations";
-  const client = project.clientName;
-  const artifact = artifacts[0] || "validation evidence";
-  const improvementVariants = [
-    `Reviewed ${terms[3]} defects at ${client}, separated data quality issues from workflow gaps, and converted the findings into ${artifact} updates that ${metrics[0]}.`,
-    `Used ${profile.evidence} to isolate where ${terms[4]} handoffs were slowing the team, then adjusted review steps so ${client} could ${metrics[0]}.`,
-    `Compared support notes, QA feedback, and ${terms[2]} trends for ${client}, turning recurring issues into clearer release actions that ${metrics[0]}.`,
-    `Prioritized ${terms[0]} fixes for ${client} by ranking operational risk, user impact, and validation effort, which ${metrics[0]}.`
-  ];
-  const readinessVariants = [
-    `Captured release notes, decision history, and ${terms[4]} assumptions for ${client} so support teams could trace why changes were accepted after handoff.`,
-    `Packaged ${artifact}, risk notes, and validation examples for ${client}, giving future project teams a practical starting point for ${terms[3]} changes.`,
-    `Documented open questions, known constraints, and ${terms[1]} acceptance evidence for ${client} to reduce repeat analysis in later sprints.`,
-    `Summarized project decisions for ${client} in plain language, connecting ${terms[2]} tradeoffs to support, QA, and release follow-up work.`
-  ];
-  const domainDecisionVariants = [
-    `Mapped ${terms[2]} exceptions for ${client} against ${artifacts[1]} and ${artifacts[2]}, giving ${domain} users a clearer view of ${terms[3]} impact before scope was accepted.`,
-    `Translated ${domain} operating details at ${client} into sprint-ready guidance by showing how ${terms[2]} issues changed ${terms[3]} controls.`,
-    `Validated ${terms[2]} scenarios for ${client} with ${artifacts[1]}, then used the findings to explain ${terms[3]} risk to delivery and QA teams.`,
-    `Reviewed ${domain} workflows for ${client} and documented where ${terms[2]} exceptions affected downstream ${terms[3]} decisions.`
-  ];
-  const variants = [
-    `Aligned ${client} stakeholders around ${role} priorities by converting ${profile.evidence} into practical decisions for ${profile.workflow}, helping ${metrics[0]}.`,
-    `Refined the ${terms[0]} to ${terms[1]} workflow at ${client} with clearer checkpoints, ${artifacts[0]}, and validation notes, helping ${metrics[0]}.`,
-    domainDecisionVariants[projectIndex % domainDecisionVariants.length],
-    `Executed ${actions[0].toLowerCase()} with ${skillPhrase}${project.cloud ? ` on ${project.cloud}` : ""}, tying project evidence to release readiness and helping ${metrics[1]}.`,
-    improvementVariants[projectIndex % improvementVariants.length],
-    readinessVariants[projectIndex % readinessVariants.length]
-  ];
-  return `- ${variants[bulletIndex % variants.length]}`;
+  const missingText = missingSkillTerms.join(" ");
+  const platformSignals = ["internal platform services", "service integration layer", "deployment platform", "shared backend platform"]
+    .filter((signal) => !(signal.includes("observability") && missingText.includes("observability")))
+    .filter((signal) => !(signal.includes("developer") && missingText.includes("developer tools")));
+  const engineeringSignals = unique([...platformSignals, "deployment environments", "cloud operations", "automation workflows", "release pipelines", "infrastructure changes", "operational runbooks"]);
+  const domainSignal = roleModel.engineeringStyle
+    ? roleModelPick(engineeringSignals, cursor, "technical delivery environment")
+    : roleModelPick(terms, cursor + 1, project.domain || "business workflow");
+  const templates = roleModel.engineeringStyle
+    ? [
+      `${action} ${responsibility} using ${method} across ${domainSignal}, ${outcome}.`,
+      `${actionVerb} ${artifact} with ${method} to reduce ${problem} across ${domainSignal}, ${outcome}.`,
+      `Applied ${method} across ${domainSignal} to reduce ${problem}, ${outcome}.`,
+      `${actionVerb} ${artifact} for ${domainSignal} teams, using ${method} to improve ${responsibility} and ${outcome}.`,
+      `${action} with ${method} to stabilize ${domainSignal}, reducing ${problem} and ${outcome}.`,
+      `${actionVerb} ${artifact} and ${method} checks for ${domainSignal}, limiting ${problem} while ${outcome}.`
+    ]
+    : [
+      `${action} for ${responsibility} using ${method} to address ${problem} in ${domainSignal} workflows, ${outcome}.`,
+      `${actionVerb} ${artifact} for ${actionObject} with ${method} so ${problem} could be isolated earlier during ${domainSignal} release cycles, ${outcome}.`,
+      `${action} by applying ${method} to ${domainSignal} scenarios, reducing ${problem} and ${outcome}.`,
+      `${actionVerb} ${artifact} for ${domainSignal} teams, connecting ${method} execution to ${problem} resolution and ${outcome}.`,
+      `${action} through ${method}, reducing ${problem} while improving ${responsibility} outcomes.`,
+      `${actionVerb} ${artifact} and ${method} checks before release handoff, limiting ${problem} while ${outcome}.`
+    ];
+  return `- ${templates[bulletIndex % templates.length]}`;
 }
 
-function maturityActionSet(level) {
-  const actions = {
-    early: ["Documented", "Validated", "Supported", "Mapped", "Coordinated", "Prepared"],
-    mid: ["Owned", "Implemented", "Streamlined", "Resolved", "Improved", "Coordinated"],
-    senior: ["Led", "Optimized", "Guided", "Improved", "Resolved", "Standardized"],
-    lead: ["Led", "Established", "Prioritized", "Mentored", "Directed", "Strengthened"]
+function genericRolePhrasePenalty(bullet, roleModel = {}) {
+  const patterns = [
+    ...(roleModel.genericRejectPatterns || []),
+    /Partnered with stakeholders to align/i,
+    /Created domain-specific coverage/i,
+    /Converted root-cause findings/i,
+    /Strengthened collaboration/i,
+    /Improved visibility/i,
+    /Delivery grounded in business needs/i,
+    /turning .* into traceable/i,
+    /role alignment through transferable experience/i,
+    /governed cloud readiness through scrum/i,
+    /applies .*css/i
+  ];
+  return patterns.some((pattern) => pattern.test(bullet)) ? 35 : 0;
+}
+
+function roleBulletRelevanceScore(bullet, project, resumeContext) {
+  const roleModel = roleModelForContext(resumeContext);
+  const text = normalize(bullet);
+  const roleTerms = unique([
+    ...(roleModel.responsibilityModel || []),
+    ...(roleModel.requiredSkillsModel || []),
+    ...(roleModel.methods || []),
+    ...(roleModel.artifacts || []),
+    ...(roleModel.recruiterExpectationModel || [])
+  ]);
+  const roleHits = roleTerms.filter((term) => text.includes(normalize(term))).length;
+  const roleCoverage = roleTerms.length ? Math.min(60, Math.round((roleHits / Math.min(roleTerms.length, 6)) * 60)) : 40;
+  const actionHits = Object.values(roleModel.actionsBySeniority || {}).flat().filter((action) => {
+    const firstWord = normalize(action).split(" ")[0];
+    return firstWord && text.includes(firstWord);
+  }).length;
+  const actionScore = actionHits ? 25 : 0;
+  const methodScore = (roleModel.methods || []).some((method) => text.includes(normalize(method))) ? 20 : 0;
+  const problemScore = (roleModel.problems || []).some((problem) => text.includes(normalize(problem))) ? 15 : 0;
+  const outcomeScore = /\b\d+%|\b\d+ hours|improved|reduced|cut|lowered|increased/i.test(bullet) ? 15 : 0;
+  const contaminationPenaltyValue = (roleModel.forbiddenTerms || [])
+    .filter((term) => text.includes(normalize(term)) && !normalize(resumeContext.jobDescription).includes(normalize(term)))
+    .length * 35;
+  const genericPenalty = genericRolePhrasePenalty(bullet, roleModel);
+  return Math.max(0, Math.min(100, roleCoverage + actionScore + methodScore + problemScore + outcomeScore - contaminationPenaltyValue - genericPenalty));
+}
+
+function enforceRoleIntelligenceOnProjectBlocks(projectBlocks, resumeContext, groupedSkills, jobKeywordGroups, attempt = 0) {
+  let rewrites = 0;
+  let removals = 0;
+  const roleScores = [];
+  const blocks = projectBlocks.map((project, projectIndex) => {
+    const level = careerLevel(Number(resumeContext.yearsOfExperience), projectIndex, projectBlocks.length);
+    const bullets = [];
+    for (let bulletIndex = 0; bulletIndex < project.bullets.length; bulletIndex += 1) {
+      let bullet = project.bullets[bulletIndex];
+      let score = roleBulletRelevanceScore(bullet, project, resumeContext);
+      if (score < 80) {
+        bullet = roleControlledBullet(project, level, groupedSkills, resumeContext, jobKeywordGroups, bulletIndex, attempt + rewrites);
+        rewrites += 1;
+        score = roleBulletRelevanceScore(bullet, project, resumeContext);
+      }
+      if (score < 60) {
+        removals += 1;
+        continue;
+      }
+      bullets.push(bullet);
+      roleScores.push(score);
+    }
+    while (bullets.length < 5) {
+      const bullet = roleControlledBullet(project, level, groupedSkills, resumeContext, jobKeywordGroups, bullets.length, attempt + rewrites + removals);
+      const score = roleBulletRelevanceScore(bullet, project, resumeContext);
+      if (score < 60) break;
+      bullets.push(bullet);
+      roleScores.push(score);
+      rewrites += 1;
+    }
+    const block = { ...project, bullets };
+    return {
+      ...block,
+      text: buildProjectText(block)
+    };
+  });
+  return {
+    projectBlocks: blocks,
+    roleScores,
+    rewrites,
+    removals,
+    minRoleScore: roleScores.length ? Math.min(...roleScores) : 0,
+    roleIntelligenceScore: roleScores.length ? Math.round(roleScores.reduce((sum, score) => sum + score, 0) / roleScores.length) : 0
   };
-  return actions[level] || actions.early;
 }
 
-function genericMetricSet(level) {
-  const metrics = {
-    early: ["improving validation accuracy by 18%", "reducing follow-up effort by 12 hours per month", "improving defect visibility by 22%"],
-    mid: ["reducing manual effort by 20 hours per month", "improving workflow turnaround by 25%", "cutting rework by 24%"],
-    senior: ["improving release readiness by 28%", "reducing delivery risk by 30%", "improving stakeholder decision speed by 32%"],
-    lead: ["improving operating consistency by 35%", "raising delivery predictability by 30%", "reducing repeated escalations by 27%"]
+function roleIntelligenceGateReport(projectBlocks, resumeContext) {
+  const bulletScores = projectBlocks.flatMap((project) => (
+    project.bullets.map((bullet, bulletIndex) => ({
+      bulletIndex,
+      clientName: project.clientName,
+      score: roleBulletRelevanceScore(bullet, project, resumeContext)
+    }))
+  ));
+  const failedBullets = bulletScores.filter((item) => item.score < 80);
+  const genericBullets = projectBlocks.flatMap((project) => (
+    project.bullets
+      .filter((bullet) => genericRolePhrasePenalty(bullet, roleModelForContext(resumeContext)) > 0)
+      .map((bullet) => ({ clientName: project.clientName, bullet }))
+  ));
+  return {
+    bulletScores,
+    failedBullets,
+    genericBullets,
+    minRoleScore: bulletScores.length ? Math.min(...bulletScores.map((item) => item.score)) : 0,
+    roleIntelligenceScore: bulletScores.length
+      ? Math.round(bulletScores.reduce((sum, item) => sum + item.score, 0) / bulletScores.length)
+      : 0
   };
-  return metrics[level] || metrics.early;
 }
 
-function jdResponsibilityThemes(resumeContext, jobKeywordGroups) {
-  const roleTerms = resumeContext.targetAnalysis?.coreResponsibilities || [];
-  const safeTerms = resumeContext.skillClassification?.resumeSafeTerms || [];
-  return unique([
-    ...roleTerms,
-    ...safeTerms,
-    ...(jobKeywordGroups.businessKeywords || []),
-    ...(jobKeywordGroups.softSkills || []),
-    ...(jobKeywordGroups.domainKeywords || [])
-  ])
-    .filter((term) => !skillCategory(term) || safeTerms.some((safe) => normalize(safe) === normalize(term)))
-    .slice(0, 16);
+function roleGateThreshold(resumeContext) {
+  return resumeContext.roleIntelligence?.engineeringStyle ? 70 : 75;
+}
+
+function careerProgressionValidationScore(projectBlocks, resumeContext) {
+  const levels = projectBlocks.map((_, index) => careerLevel(
+    Number(resumeContext.yearsOfExperience),
+    index,
+    projectBlocks.length
+  ));
+  const uniqueLevels = unique(levels);
+  if (projectBlocks.length <= 1) return 90;
+  if (uniqueLevels.length >= 3) return 100;
+  if (uniqueLevels.length === 2) return 88;
+  return 65;
 }
 
 function jdRelevantBulletSet(project, level, groupedSkills, resumeContext, jobKeywordGroups) {
-  const actions = maturityActionSet(level);
-  const terms = domainTerms(project.domain);
-  const profile = domainProfile(project.domain);
-  const themes = jdResponsibilityThemes(resumeContext, jobKeywordGroups);
-  const skills = unique([
-    ...flattenGroupedSkills(groupedSkills),
-    ...themes.filter((term) => !skillCategory(term))
-  ]);
-  const artifacts = authenticRoleArtifacts(inferRoleTrack(resumeContext.targetJobTitle), resumeContext.skillClassification);
-  const metrics = genericMetricSet(level);
-  const index = Number(project.sequence || 0);
-  const pick = (items, offset, fallback) => items.length ? items[(index + offset) % items.length] : fallback;
-  const client = project.clientName;
-  const domain = project.domain || "business operations";
-  const responsibility = pick(themes, 0, "role-aligned delivery");
-  const secondary = pick(themes, 1, "stakeholder alignment");
-  const skill = pick(skills, 2, "structured analysis");
-  const artifact = pick(artifacts, 3, "validation evidence");
-
-  return [
-    `- ${actions[0]} ${responsibility} needs for ${client} by using ${artifact} and ${skill} across ${profile.workflow}, ${metrics[0]}.`,
-    `- ${actions[1]} ${terms[0]} and ${terms[1]} scenarios through ${secondary} checkpoints, giving ${domain} stakeholders clearer release evidence and ${metrics[1]}.`,
-    `- ${actions[2]} handoffs between ${profile.stakeholders} with process notes, validation findings, and decision records so project scope stayed connected to the target ${resumeContext.targetJobTitle} expectations.`,
-    `- ${actions[3]} recurring gaps in ${terms[2]} workflows by tracing root causes through ${profile.evidence}, helping teams reduce avoidable rework while keeping delivery realistic.`,
-    `- ${actions[4]} project execution with ${skill}, ${artifact}, and domain-specific review routines, improving visibility into ${terms[3]} risks before release decisions were made.`,
-    `- ${actions[5]} reusable documentation, open-risk notes, and outcome evidence for ${client}, helping later teams understand ${terms[4]} decisions without repeating earlier analysis.`
-  ];
+  return Array.from({ length: 6 }, (_, bulletIndex) => (
+    roleControlledBullet(project, level, groupedSkills, resumeContext, jobKeywordGroups, bulletIndex)
+  ));
 }
 
 function buildJdRelevantProjectBlocks(projects, years, groupedSkills, resumeContext, jobKeywordGroups) {
-  return projects.map((project, index) => {
+  const blocks = projects.map((project, index) => {
     const level = careerLevel(Number(years), index, projects.length);
     const role = resolveProjectRole(project, Number(years), index, resumeContext.targetJobTitle);
     const bullets = jdRelevantBulletSet(project, level, groupedSkills, resumeContext, jobKeywordGroups);
@@ -1666,6 +2180,7 @@ function buildJdRelevantProjectBlocks(projects, years, groupedSkills, resumeCont
       text: buildProjectText(block)
     };
   });
+  return enforceRoleIntelligenceOnProjectBlocks(blocks, resumeContext, groupedSkills, jobKeywordGroups).projectBlocks;
 }
 
 function optimizeDraftForAtsRelevance(draft, resumeContext, projects, groupedSkills, jobKeywordGroups, attempt = 0) {
@@ -1766,9 +2281,13 @@ function projectQualityScore(projectBlocks, resume) {
 }
 
 function unsupportedClaimKeywords(resumeContext, resume) {
+  const titlePattern = new RegExp(cleanRoleTitle(resumeContext.targetJobTitle).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  const resumeWithoutTargetTitle = String(resume || "").replace(titlePattern, "");
+  const roleResponsibilities = resumeContext.roleIntelligence?.responsibilityModel || [];
   return unique(resumeContext.skillClassification?.missing || [])
     .filter((skill) => skillCategory(skill))
-    .filter((skill) => contentContains(resume, skill));
+    .filter((skill) => !roleResponsibilities.some((responsibility) => normalize(responsibility) === normalize(skill)))
+    .filter((skill) => contentContains(resumeWithoutTargetTitle, skill));
 }
 
 function progressionScore(projectBlocks) {
@@ -1805,22 +2324,22 @@ function irrelevantContentScore(resumeContext, resume) {
 }
 
 function containsGenericResumePhrases(resume) {
-  return /Partnered with stakeholders to align|Converted root-cause findings|Created domain-specific coverage|Strengthened collaboration|Delivery grounded in business needs|responsible for|worked on|involved in|participated in/i.test(resume);
+  return /Partnered with stakeholders to align|Converted root-cause findings|Created domain-specific coverage|Strengthened collaboration|Delivery grounded in business needs|turning .* into traceable|role alignment through transferable experience|governed cloud readiness through scrum|applies .*css|responsible for|worked on|involved in|participated in/i.test(resume);
 }
 
 function finalResumeStatus(analysis, report) {
   const blockers = blockingValidationErrors(report?.validationErrors || []);
-  if (blockers.includes("duplicate_bullets") || analysis.authenticity_score < 90) {
-    return "blocked_duplicate_or_generic_bullets";
+  if (blockers.includes("career_progression_failed")) {
+    return "generation_blocked_due_to_career_progression";
   }
-  if (analysis.unsupported_keywords.length) {
-    return "blocked_exaggeration_risk";
+  if (blockers.includes("duplicate_bullets")) {
+    return "blocked_duplicate_or_generic_bullets";
   }
   if (blockers.length || analysis.relevance_score < 60) {
     return "needs_review_low_relevance";
   }
   if (analysis.missing_keywords.length && analysis.ats_score < 90) {
-    return "needs_review_missing_required_skills";
+    return "ready_best_possible";
   }
   if (analysis.ats_score >= 90 && analysis.relevance_score >= 80) {
     return "ready_ats_90_plus";
@@ -1840,6 +2359,9 @@ function improvementSummary(previousAnalysis, nextAnalysis, rewrites = 0) {
   if (nextAnalysis.unsupported_keywords.length) {
     notes.push("Flagged unsupported JD skills so they are not overstated.");
   }
+  if (nextAnalysis.ats_score < 90 && nextAnalysis.missing_keywords.length) {
+    notes.push("Marked ready best possible because role accuracy and experience authenticity were prioritized over unsupported ATS keyword insertion.");
+  }
   if (!notes.length) notes.push("Resume already met the relevance and authenticity checks.");
   return notes.join(" ");
 }
@@ -1858,7 +2380,7 @@ function atsRelevanceAnalysis({ resumeContext, resume, projectBlocks, groupedSki
     jobKeywordGroups
   });
   const roleTrack = inferRoleTrack(resumeContext.targetJobTitle);
-  const roleRelevance = scoreCoverage([
+  const roleRelevance = report?.roleIntelligenceScore ?? scoreCoverage([
     resumeContext.targetJobTitle,
     ...roleTerminology(roleTrack, resumeContext.skillClassification),
     ...(resumeContext.targetAnalysis?.coreResponsibilities || [])
@@ -1929,6 +2451,7 @@ function qualityGateScore({ data, resume, projectBlocks, groupedSkills, jobKeywo
 
 function qualityGateReport({ data, resume, projectBlocks, groupedSkills, jobKeywordGroups }) {
   const roleTrack = inferRoleTrack(data.jobTitle);
+  const roleGate = roleIntelligenceGateReport(projectBlocks, data);
   const requirements = unique([
     ...jobKeywordGroups.requiredSkills,
     ...jobKeywordGroups.preferredSkills,
@@ -1944,7 +2467,7 @@ function qualityGateReport({ data, resume, projectBlocks, groupedSkills, jobKeyw
   const recruiter = recruiterScore(projectBlocks, resume);
   const authenticity = duplicateScore(projectBlocks);
   const projectQuality = projectQualityScore(projectBlocks, resume);
-  const careerProgression = progressionScore(projectBlocks);
+  const careerProgression = Math.min(progressionScore(projectBlocks), careerProgressionValidationScore(projectBlocks, data));
   const roleContamination = contaminationPenalty(roleTrack, resume, data.jobDescription, data.candidateProfileText);
   const atsScore = qualityGateScore({ data, resume, projectBlocks, groupedSkills, jobKeywordGroups });
   const validationErrors = validateGeneratedResume(data, resume, projectBlocks, {
@@ -1962,8 +2485,14 @@ function qualityGateReport({ data, resume, projectBlocks, groupedSkills, jobKeyw
     projectQuality,
     recruiter,
     requirements,
+    resumeContext: data,
     roleAlignment,
     roleContamination,
+    roleBulletScores: roleGate.bulletScores,
+    roleIntelligenceScore: roleGate.roleIntelligenceScore,
+    roleIntelligenceMinScore: roleGate.minRoleScore,
+    roleIntelligenceFailures: roleGate.failedBullets,
+    genericAiBullets: roleGate.genericBullets,
     skillClassification: data.skillClassification || {},
     skillsAlignment,
     validationErrors
@@ -1971,9 +2500,11 @@ function qualityGateReport({ data, resume, projectBlocks, groupedSkills, jobKeyw
 }
 
 function passesFinalGate(report) {
+  const roleThreshold = roleGateThreshold(report.resumeContext || {});
   return report.atsScore >= 95 &&
     report.recruiter >= 95 &&
-    report.roleAlignment >= 95 &&
+    report.roleIntelligenceScore >= 80 &&
+    report.roleIntelligenceMinScore >= roleThreshold &&
     report.authenticity >= 90 &&
     report.keywordCoverage >= 95 &&
     report.projectQuality >= 90 &&
@@ -1984,6 +2515,8 @@ function passesFinalGate(report) {
 function blockingValidationErrors(errors = []) {
   const nonBlocking = new Set([
     "keyword_coverage_low",
+    "role_intelligence_failed",
+    "generic_ai_language",
     "role_contamination",
     "unsupported_skill_claim"
   ]);
@@ -2019,7 +2552,7 @@ function extractClientLines(resume) {
 
 function validateGeneratedResume(resumeContext, resume, projectBlocks, reportBase = {}) {
   const errors = [];
-  const placeholderPattern = /\[Insert|Candidate Name Here|Client Here|Role Here|TBD|Placeholder|\{\{[^}]*\}\}|\[\[[^\]]+\]\]/i;
+  const placeholderPattern = /\[Insert|Candidate Name Here|Client Here|Role Here|TBD|\bPlaceholder\b(?!\s+Settings)|\{\{[^}]*\}\}|\[\[[^\]]+\]\]/i;
   if (!contentContains(resume, resumeContext.candidateName)) {
     errors.push("candidate_name_missing");
   }
@@ -2047,6 +2580,17 @@ function validateGeneratedResume(resumeContext, resume, projectBlocks, reportBas
   if ((reportBase.roleContamination ?? contaminationPenalty(inferRoleTrack(resumeContext.targetJobTitle), resume, resumeContext.jobDescription, resumeContext.candidateProfileText)) > 5) {
     errors.push("role_contamination");
   }
+  const roleGate = roleIntelligenceGateReport(projectBlocks, resumeContext);
+  const roleThreshold = roleGateThreshold(resumeContext);
+  if (roleGate.minRoleScore < roleThreshold || roleGate.failedBullets.some((item) => item.score < roleThreshold)) {
+    errors.push("role_intelligence_failed");
+  }
+  if (roleGate.genericBullets.length || containsGenericResumePhrases(resume)) {
+    errors.push("generic_ai_language");
+  }
+  if (careerProgressionValidationScore(projectBlocks, resumeContext) < 80) {
+    errors.push("career_progression_failed");
+  }
   const unsupportedClaims = unsupportedClaimKeywords(resumeContext, resume);
   if (unsupportedClaims.length) {
     errors.push("unsupported_skill_claim");
@@ -2055,69 +2599,6 @@ function validateGeneratedResume(resumeContext, resume, projectBlocks, reportBas
     errors.push("keyword_coverage_low");
   }
   return errors;
-}
-
-function bulletSet(project, level, skills, jobMap, resumeContext) {
-  const roleTrack = inferRoleTrack(resumeContext.targetJobTitle);
-  const actions = authenticRoleActions(roleTrack, level, resumeContext.skillClassification);
-  const terms = domainTerms(project.domain);
-  const role = cleanRoleTitle(resumeContext.targetJobTitle);
-  const index = project.sequence || 0;
-  const topSkills = rotatedItems(skills, index, 4);
-  const skillPhrase = topSkills.length ? topSkills.join(", ") : "target-role practices";
-  const cloud = project.cloud || skills.find((skill) => ["AWS", "Azure", "GCP"].includes(skill));
-  const focus = projectNarrativeFocus(project, index, level);
-  const profile = domainProfile(project.domain);
-  const artifacts = rotatedItems(authenticRoleArtifacts(roleTrack, resumeContext.skillClassification), index * 2, 4);
-  const metrics = rotatedItems(metricBank(roleTrack), index * 2, 2);
-  const context = {
-    actions,
-    artifacts,
-    cloud,
-    focus,
-    index,
-    metrics,
-    profile,
-    project,
-    role,
-    skillPhrase,
-    terms
-  };
-
-  return [
-    stakeholderBullet(context),
-    processBullet(context),
-    domainBullet(context),
-    executionBullet(context),
-    improvementBullet(context),
-    readinessBullet(context)
-  ];
-}
-
-function buildExperience(projects, years, groupedSkills, jobMap, resumeContext) {
-  return buildProjectBlocks(projects, years, groupedSkills, jobMap, resumeContext)
-    .map((project) => project.text)
-    .join("\n\n");
-}
-
-function buildProjectBlocks(projects, years, groupedSkills, jobMap, resumeContext) {
-  const allSkills = unique(Object.values(groupedSkills).flat());
-  return projects.map((project, index) => {
-    const level = careerLevel(Number(years), index, projects.length);
-    const bullets = bulletSet(project, level, allSkills, jobMap, resumeContext).map((line) => `- ${line}`);
-    const role = resolveProjectRole(project, Number(years), index, resumeContext.targetJobTitle);
-    const text = buildProjectText({
-      ...project,
-      role,
-      bullets
-    });
-    return {
-      ...project,
-      role,
-      bullets,
-      text
-    };
-  });
 }
 
 function replaceSection(template, headingPattern, content) {
@@ -2209,12 +2690,12 @@ function populateTemplate(template, sections) {
   return resume.replace(/\n{4,}/g, "\n\n\n").trim();
 }
 
-function buildResumeDraft(data, projects, groupedSkills, jobMap, correctionTerms = []) {
-  const summary = buildSummary({ ...data, projects, groupedSkills, jobMap, correctionTerms });
+function buildResumeDraft(data, projects, groupedSkills, jobKeywordGroups, correctionTerms = []) {
+  const summary = buildSummary({ ...data, projects, groupedSkills, correctionTerms });
   const summaryLineList = summaryLines({ ...data, projects, groupedSkills, jobDescription: data.jobDescription, correctionTerms });
   const skills = buildSkillMatrix(groupedSkills, data.jobDescription);
   const skillLines = skills.split("\n").filter(Boolean);
-  const projectBlocks = buildProjectBlocks(projects, data.years, groupedSkills, jobMap, data);
+  const projectBlocks = buildJdRelevantProjectBlocks(projects, data.years, groupedSkills, data, jobKeywordGroups);
   const experience = projectBlocks.map((project) => project.text).join("\n\n");
   const resume = populateTemplate(data.template, {
     candidateName: data.candidateName,
@@ -2244,11 +2725,11 @@ function generateResumeArtifacts(data) {
   const targetAnalysis = analyzeResumeTarget(resumeContext.targetJobTitle, resumeContext.jobDescription, resumeContext.yearsOfExperience);
   const skillDetection = detectSkills(resumeContext, projects, jobKeywordGroups);
   const groupedSkills = skillDetection.groupedSkills;
-  const jobMap = targetAnalysis.jobMap;
   resumeContext.skills = flattenGroupedSkills(groupedSkills);
   resumeContext.candidateProfileText = skillDetection.profileText;
   resumeContext.skillClassification = skillDetection.classification;
   resumeContext.targetAnalysis = targetAnalysis;
+  resumeContext.roleIntelligence = buildRoleIntelligenceModel(resumeContext, jobKeywordGroups, groupedSkills);
   const roleTrack = inferRoleTrack(resumeContext.targetJobTitle);
   let correctionTerms = [];
   let draft = null;
@@ -2256,7 +2737,7 @@ function generateResumeArtifacts(data) {
   let relevanceAnalysis = null;
 
   for (let attempt = 0; attempt < 6; attempt += 1) {
-    draft = buildResumeDraft(resumeContext, projects, groupedSkills, jobMap, correctionTerms);
+    draft = buildResumeDraft(resumeContext, projects, groupedSkills, jobKeywordGroups, correctionTerms);
     const duplicateRepair = rewriteDuplicateProjectBullets(draft.projectBlocks, resumeContext, groupedSkills, attempt);
     if (duplicateRepair.rewrites) {
       draft = rebuildDraftWithProjectBlocks(draft, resumeContext, duplicateRepair.projectBlocks);
@@ -2350,12 +2831,15 @@ function generateResumeArtifacts(data) {
   const finalOutput = `ATS SCORE: ${score}%\n\n${draft.resume}`;
   const finalStatus = relevanceAnalysis?.final_resume_status || "ready_best_possible";
   const validationPassed = hasMeaningfulGeneration(report) &&
-    !/^blocked_/.test(finalStatus);
+    !/^(blocked_|generation_blocked)/.test(finalStatus);
 
   return {
     ats_score: score,
     keyword_match_score: relevanceAnalysis?.keyword_match_score || report?.keywordCoverage || 0,
     role_relevance_score: relevanceAnalysis?.role_relevance_score || report?.roleAlignment || 0,
+    role_intelligence_score: report?.roleIntelligenceScore || 0,
+    role_intelligence_min_score: report?.roleIntelligenceMinScore || 0,
+    role_bullet_scores: report?.roleBulletScores || [],
     recruiter_readability_score: relevanceAnalysis?.recruiter_readability_score || report?.recruiter || 0,
     authenticity_score: relevanceAnalysis?.authenticity_score || report?.authenticity || 0,
     chronological_growth_score: relevanceAnalysis?.chronological_growth_score || report?.careerProgression || 0,
@@ -2371,9 +2855,13 @@ function generateResumeArtifacts(data) {
     jobTitle: resumeContext.targetJobTitle,
     candidateName: resumeContext.candidateName,
     resumeContext,
+    roleIntelligence: resumeContext.roleIntelligence,
     atsMatchScore: score,
     keywordMatchScore: relevanceAnalysis?.keyword_match_score || report?.keywordCoverage || 0,
     roleRelevanceScore: relevanceAnalysis?.role_relevance_score || report?.roleAlignment || 0,
+    roleIntelligenceScore: report?.roleIntelligenceScore || 0,
+    roleIntelligenceMinScore: report?.roleIntelligenceMinScore || 0,
+    roleBulletScores: report?.roleBulletScores || [],
     recruiterReadabilityScore: relevanceAnalysis?.recruiter_readability_score || report?.recruiter || 0,
     authenticityScore: relevanceAnalysis?.authenticity_score || report?.authenticity || 0,
     chronologicalGrowthScore: relevanceAnalysis?.chronological_growth_score || report?.careerProgression || 0,
@@ -2400,10 +2888,6 @@ function generateResumeArtifacts(data) {
     finalResume: draft.resume,
     resume: finalOutput
   };
-}
-
-function generateResume(data) {
-  return generateResumeArtifacts(data).resume;
 }
 
 function formData() {
@@ -2471,6 +2955,7 @@ function setActiveTemplate(templateId, options = {}) {
     name: selected.name,
     buffer: selected.docxBuffer
   } : null;
+  alignProjectTimeline();
   invalidateGeneratedResume("");
   setStatus("Template uploaded.", "success");
   if (!options.silentValidation) {
@@ -2545,8 +3030,14 @@ function validateResumeInputs(data) {
   if (!String(data.template || "").trim()) missing.push("resume template");
   const projects = collectProjects();
   if (!projects.length) missing.push("at least one project");
-  if (projects.some((project) => !project.clientName)) missing.push("client names");
-  if (projects.some((project) => !project.domain)) missing.push("project domains");
+  const projectsMissingClient = projects
+    .map((project, index) => project.clientName ? "" : `project ${index + 1}`)
+    .filter(Boolean);
+  const projectsMissingDomain = projects
+    .map((project, index) => project.domain ? "" : `project ${index + 1}`)
+    .filter(Boolean);
+  if (projectsMissingClient.length) missing.push(`client name for ${projectsMissingClient.join(", ")}`);
+  if (projectsMissingDomain.length) missing.push(`domain for ${projectsMissingDomain.join(", ")}`);
   if (missing.length) {
     return `Required: ${missing.join(", ")}.`;
   }
@@ -2554,7 +3045,65 @@ function validateResumeInputs(data) {
   if (!Number.isFinite(years) || years < 0 || years > 35) {
     return "Years of experience must be a number between 0 and 35.";
   }
+  if (!/\[Insert Bullet points Here\]|\[Populate project experience here\]|Work Experience|Professional Experience|Project Experience|Responsibilities/i.test(String(data.template || ""))) {
+    return "Resume template issue: add project placeholders such as [Insert Bullet points Here] under each project, or include a Work Experience/Responsibilities section.";
+  }
   return "";
+}
+
+function generationFailureMessage(artifacts) {
+  if (!artifacts) return FINAL_GENERATION_FAILURE_MESSAGE;
+
+  const report = artifacts.qualityReport || {};
+  const errors = report.validationErrors || [];
+  const blockers = blockingValidationErrors(errors);
+  const status = artifacts.final_resume_status || artifacts.finalResumeStatus || "";
+  const missingKeywords = artifacts.missing_keywords || artifacts.missingSkills || [];
+  const unsupportedKeywords = artifacts.unsupported_keywords || artifacts.unsupportedKeywords || [];
+
+  if (blockers.includes("candidate_name_missing")) {
+    return "Candidate name issue: the generated resume could not place the candidate name. Check the Candidate name field and make sure the template has a name line or candidate-name placeholder.";
+  }
+  if (blockers.includes("placeholder_remaining")) {
+    return "Template placeholder issue: some placeholders are still present after generation. Check the resume template for [Insert...], [Client Here], [Role Here], {{ }}, or [[ ]] placeholders and make sure they are valid.";
+  }
+  if (blockers.includes("client_mismatch") || blockers.includes("project_client_mismatch")) {
+    return "Project client mapping issue: the project client names in the generated resume do not match the client names entered in the project cards. Check every Client name field and regenerate.";
+  }
+  if (blockers.includes("duration_mismatch")) {
+    return "Timeline issue: project durations could not align with the Years of experience value. Check Years of experience and regenerate.";
+  }
+  if (blockers.includes("role_progression_mismatch")) {
+    return "Designation issue: project roles did not align with the entered designation/job title progression. Check each project Designation field and regenerate.";
+  }
+  if (blockers.includes("duplicate_bullets") || status === "blocked_duplicate_or_generic_bullets") {
+    return "Project detail issue: several generated project bullets are still too similar. Add more specific domain/problem/responsibility details for each project, especially what was different for each client, then regenerate.";
+  }
+  if (blockers.includes("role_intelligence_failed") || blockers.includes("generic_ai_language") || status === "generation_blocked_due_to_role_mismatch") {
+    return "Role alignment issue: the generated bullets did not strongly match the target job title. Check the Target Job Title and add project details that describe the actual role-specific work performed, then regenerate.";
+  }
+  if (blockers.includes("career_progression_failed") || status === "generation_blocked_due_to_career_progression") {
+    return "Career progression issue: the project responsibilities do not show a natural growth from earlier execution work to later ownership or leadership. Add clearer designations or project responsibility details, then regenerate.";
+  }
+  if (blockers.includes("role_contamination") || status === "generation_blocked_due_to_role_contamination") {
+    return "Role contamination issue: the resume tried to include responsibilities or tools that do not belong to the selected target role. Review the job title, job description, and project inputs before regenerating.";
+  }
+  if (status === "blocked_exaggeration_risk") {
+    const terms = unsupportedKeywords.length ? ` Unsupported skills detected: ${unsupportedKeywords.slice(0, 6).join(", ")}.` : "";
+    return `Skill authenticity issue: the job description asks for skills that are not supported by the resume template or project inputs.${terms} Add truthful evidence for those skills or adjust the target JD.`;
+  }
+  if (status === "needs_review_missing_required_skills") {
+    const terms = missingKeywords.length ? ` Missing required skills: ${missingKeywords.slice(0, 6).join(", ")}.` : "";
+    return `Resume generated, but ATS fit needs review because some JD requirements are missing from the candidate profile.${terms}`;
+  }
+  if (status === "needs_review_low_relevance") {
+    return "Relevance issue: the project inputs do not strongly support the target job description. Add clearer project responsibilities, tools/processes used, and role-specific outcomes, then regenerate.";
+  }
+  if (errors.includes("keyword_coverage_low")) {
+    const terms = missingKeywords.length ? ` Missing/weak JD terms: ${missingKeywords.slice(0, 6).join(", ")}.` : "";
+    return `ATS coverage is low, but the app avoided adding unsupported keywords.${terms} Add truthful project evidence for the missing requirements if available.`;
+  }
+  return FINAL_GENERATION_FAILURE_MESSAGE;
 }
 
 function markDraftChanged() {
@@ -2599,7 +3148,7 @@ form.addEventListener("submit", (event) => {
   if (!latestResumeArtifacts.validationPassed) {
     resumeReady = false;
     outputEl.textContent = "";
-    setStatus(FINAL_GENERATION_FAILURE_MESSAGE, "error");
+    setStatus(generationFailureMessage(latestResumeArtifacts), "error");
     return;
   }
   resumeReady = true;
@@ -2615,6 +3164,7 @@ document.querySelector("#useSampleBtn").addEventListener("click", () => {
   uploadedDocxTemplate = null;
   activeTemplateId = null;
   templateArea.value = sampleTemplate;
+  alignProjectTimeline();
   if (templateUploadValidation) templateUploadValidation.textContent = "Sample template loaded";
   invalidateGeneratedResume("No resume generated yet.");
   renderTemplateList();
@@ -2629,7 +3179,10 @@ form.elements.jobTitle.addEventListener("input", () => {
   markDraftChanged();
 });
 form.elements.jobDescription.addEventListener("input", markDraftChanged);
-templateArea.addEventListener("input", markDraftChanged);
+templateArea.addEventListener("input", () => {
+  alignProjectTimeline();
+  markDraftChanged();
+});
 projectsEl.addEventListener("input", markDraftChanged);
 
 document.querySelector("#templateFile").addEventListener("change", async (event) => {
