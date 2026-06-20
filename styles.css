@@ -36,6 +36,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html {
   min-width: 320px;
 }
@@ -270,7 +274,7 @@ p {
 .output-panel {
   min-height: calc(100vh - 122px);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .brand-row {
@@ -611,6 +615,202 @@ textarea:focus {
   background: rgba(185, 71, 71, 0.1);
 }
 
+.analysis-panel {
+  display: grid;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+  background: #ffffff;
+}
+
+.workflow-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+
+.workflow-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 52px;
+  padding: 8px 12px;
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.workflow-step:last-child {
+  border-right: 0;
+}
+
+.step-index {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--muted);
+  background: #ffffff;
+}
+
+.workflow-step[data-state="active"] {
+  color: var(--primary-dark);
+  background: var(--primary-soft);
+}
+
+.workflow-step[data-state="active"] .step-index {
+  border-color: var(--aqua-strong);
+  color: #ffffff;
+  background: var(--aqua-strong);
+}
+
+.workflow-step[data-state="done"] {
+  color: var(--success);
+  background: rgba(22, 124, 92, 0.06);
+}
+
+.workflow-step[data-state="done"] .step-index {
+  border-color: var(--success);
+  color: #ffffff;
+  background: var(--success);
+}
+
+.workflow-step[data-state="error"] {
+  color: var(--danger);
+  background: rgba(185, 71, 71, 0.06);
+}
+
+.workflow-step[data-state="error"] .step-index {
+  border-color: var(--danger);
+  color: #ffffff;
+  background: var(--danger);
+}
+
+.ats-result {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+}
+
+.ats-score-block {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  min-height: 190px;
+  padding: 20px;
+  border-right: 1px solid var(--line);
+  background: #f1faf7;
+}
+
+.ats-label,
+.ats-provider {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-align: center;
+}
+
+#atsScore {
+  margin: 2px 0;
+  color: var(--success);
+  font-size: 3rem;
+  line-height: 1;
+}
+
+#atsScore::after {
+  content: "%";
+  margin-left: 2px;
+  color: var(--muted);
+  font-size: 1rem;
+}
+
+#atsScore.is-unavailable {
+  color: var(--muted);
+  font-size: 1.8rem;
+}
+
+#atsScore.is-unavailable::after {
+  content: "";
+}
+
+.ats-report {
+  display: grid;
+  gap: 12px;
+  padding: 18px 20px;
+}
+
+.ats-summary {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.ats-breakdown {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--line);
+}
+
+.ats-metric {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  background: #ffffff;
+}
+
+.ats-metric span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.ats-metric strong {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.ats-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding-top: 2px;
+}
+
+.ats-detail-grid section {
+  min-width: 0;
+}
+
+.ats-detail-grid h3 {
+  margin-bottom: 5px;
+  font-size: 0.82rem;
+}
+
+.ats-detail-grid ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.ats-disclaimer {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 0.7rem;
+}
+
 .resume-output {
   position: relative;
   min-height: 480px;
@@ -712,6 +912,33 @@ textarea:focus {
     min-height: 360px;
     padding: 18px;
     font-size: 0.9rem;
+  }
+
+  .workflow-progress {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workflow-step:nth-child(2) {
+    border-right: 0;
+  }
+
+  .workflow-step:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .ats-result,
+  .ats-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ats-score-block {
+    min-height: 120px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .ats-breakdown {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

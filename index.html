@@ -106,6 +106,49 @@
               <button id="downloadBtn" type="button" title="Download resume" disabled>Download</button>
             </div>
           </div>
+          <section id="analysisPanel" class="analysis-panel" hidden aria-live="polite">
+            <div class="workflow-progress" aria-label="Resume generation progress">
+              <div class="workflow-step" data-step="jd">
+                <span class="step-index">1</span>
+                <span>Analyze JD</span>
+              </div>
+              <div class="workflow-step" data-step="stories">
+                <span class="step-index">2</span>
+                <span>Build project stories</span>
+              </div>
+              <div class="workflow-step" data-step="progression">
+                <span class="step-index">3</span>
+                <span>Validate progression</span>
+              </div>
+              <div class="workflow-step" data-step="ats">
+                <span class="step-index">4</span>
+                <span>External ATS review</span>
+              </div>
+            </div>
+
+            <div id="atsResult" class="ats-result" hidden>
+              <div class="ats-score-block">
+                <span class="ats-label">AI ATS score</span>
+                <strong id="atsScore">--</strong>
+                <span id="atsProvider" class="ats-provider"></span>
+              </div>
+              <div class="ats-report">
+                <p id="atsSummary" class="ats-summary"></p>
+                <div id="atsBreakdown" class="ats-breakdown"></div>
+                <div class="ats-detail-grid">
+                  <section>
+                    <h3>Strengths</h3>
+                    <ul id="atsStrengths"></ul>
+                  </section>
+                  <section>
+                    <h3>Priority improvements</h3>
+                    <ul id="atsRecommendations"></ul>
+                  </section>
+                </div>
+                <p id="atsDisclaimer" class="ats-disclaimer"></p>
+              </div>
+            </div>
+          </section>
           <pre id="resumeOutput" class="resume-output" aria-live="polite"></pre>
         </section>
       </section>
@@ -138,6 +181,6 @@
       </article>
     </template>
 
-    <script src="./app.js"></script>
+    <script src="./app.js?v=20260620-external-ats-analysis"></script>
   </body>
 </html>
